@@ -74,3 +74,61 @@ Den har appen ska fungera som ett mobilt register over alla objekt och deras utr
    - Öppna webbappen i mobilens webbläsare (lägg till på hemskärmen för PWA).
    - Tillåt kameran, välj ett objekt och ta en bild.
    - Stäng av nätet för att se offline-kö, slå på igen för automatisk synk.
+
+## Nya funktioner (Lagg till/Sok + Gemini)
+- Startsidan har nu tva lagen: `Lagg till` och `Sok`.
+- `Lagg till`-flode:
+  1. Fota systempositionens ID.
+  2. API anropar Gemini for OCR-lik tolkning och foreslar ID.
+  3. Anvandaren bekraftar/rattar ID och sparar aggregatet.
+  4. Komponenter (Motorbricka, Flakt, Kilrep, Remskivor, Filter) kan laggas till via bild + AI-forslag.
+  5. Varje komponent har obligatoriska falt som valideras i API:t innan sparning.
+- `Sok`-laget visar sparade aggregat och komponentdata.
+
+### Nya API-endpoints
+- `POST /ai/systemposition`
+- `POST /ai/component`
+- `POST /aggregates`
+- `GET /aggregates?query=...`
+- `GET /aggregates/{id}`
+- `POST /aggregates/{id}/components`
+
+### Miljovariabler for Gemini
+Satt dessa innan du startar API:t:
+
+```bash
+GEMINI_API_KEY=din-nyckel
+GEMINI_MODEL=gemini-2.0-flash
+```
+
+Om `GEMINI_API_KEY` saknas anvander API:t fallback-svar sa att flodet fortfarande kan testas manuellt.
+
+## Deploy pa Vercel med Supabase
+Nya versionen av webbappen kan deployas utan .NET-backend genom Next.js API-routes under `app/api/*`.
+
+### 1. Skapa Supabase-projekt
+1. Skapa ett nytt projekt i Supabase.
+2. Kor SQL-filen `supabase/schema.sql` i Supabase SQL Editor.
+3. Bekrafta att tabellerna `ventilation_aggregates` och `ventilation_components` skapats.
+
+### 2. Satt miljo-variabler i Vercel
+Lagg in foljande variabler i Vercel-projektet:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL` (valfritt, default `gemini-2.0-flash`)
+- `NEXT_PUBLIC_API_BASE_URL` (lamna tom for interna `/api`-routes)
+
+Se ocksa `.env.example`.
+
+### 3. Deploy
+1. Pusha koden till GitHub.
+2. Importera repo i Vercel.
+3. Vercel bygger Next.js-appen och exponerar frontend + API-routes tillsammans.
+
+### 4. Verifiera efter deploy
+- `POST /api/ai/systemposition` fungerar (Gemini/fallback).
+- `POST /api/aggregates` skapar poster i Supabase.
+- `POST /api/aggregates/{id}/components` validerar obligatoriska falt.
+- Sok i appen visar sparade poster fran Supabase.

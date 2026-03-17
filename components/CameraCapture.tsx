@@ -4,9 +4,17 @@ import { useEffect, useRef, useState } from 'react';
 
 type Props = {
   onCapture: (dataUrl: string) => void;
+  title?: string;
+  subtitle?: string;
+  captureLabel?: string;
 };
 
-export function CameraCapture({ onCapture }: Props) {
+export function CameraCapture({
+  onCapture,
+  title = 'Fota objekt',
+  subtitle = 'Kameralage',
+  captureLabel = 'Ta bild'
+}: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(false);
@@ -77,9 +85,9 @@ export function CameraCapture({ onCapture }: Props) {
       >
         <div>
           <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>
-            Kameralage
+            {subtitle}
           </p>
-          <strong>Fota objekt</strong>
+          <strong>{title}</strong>
         </div>
         <span
           style={{
@@ -140,7 +148,7 @@ export function CameraCapture({ onCapture }: Props) {
           cursor: 'pointer'
         }}
       >
-        Ta bild
+        {captureLabel}
       </button>
     </section>
   );
