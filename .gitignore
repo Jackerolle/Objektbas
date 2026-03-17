@@ -1,0 +1,28 @@
+# Node / Next
+node_modules
+.next
+out
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# VS / Rider
+.vs
+.vscode
+*.user
+*.suo
+
+# dotnet
+bin/
+obj/
