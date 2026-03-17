@@ -32,7 +32,7 @@ async function parseError(response: Response): Promise<string> {
 
 export async function fetchObjects(): Promise<Objekt[]> {
   try {
-    const response = await fetch(toApiUrl('/objects'), {
+    const response = await fetch(toApiUrl('/api/objects'), {
       cache: 'no-store'
     });
 
@@ -51,7 +51,7 @@ export async function createObservation(
   payload: ObservationPayload
 ): Promise<void> {
   try {
-    const response = await fetch(toApiUrl('/observations'), {
+    const response = await fetch(toApiUrl('/api/observations'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
