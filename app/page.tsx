@@ -14,8 +14,8 @@ import {
 } from '@/lib/api';
 import {
   COMPONENT_FIELD_CONFIG,
-  COMPONENT_OPTIONS,
   createEmptyAttributes,
+  getMissingRequiredFields,
   isKnownComponentType
 } from '@/lib/componentSchema';
 import {
@@ -42,14 +42,14 @@ type CaptureTask = {
 type SortOrder = 'nyast' | 'aldst';
 type StartMethod = 'foto' | 'manuell';
 
-const ASSEMBLY_OPTIONS = ['Motor', 'Fläkt', 'Aggregat', 'Övrigt'] as const;
+const ASSEMBLY_OPTIONS = ['Aggregat', 'Motor', 'Fl\u00e4kt', '\u00d6vrigt'] as const;
 type AssemblyOption = (typeof ASSEMBLY_OPTIONS)[number];
 
 const SUB_COMPONENT_PRESETS: Record<AssemblyOption, string[]> = {
-  Motor: ['Motorskylt', 'Remskiva', 'Bussning', 'Lager', 'Axeldiameter', 'Kilrem'],
-  Fläkt: ['Fläkthjul', 'Remskiva', 'Lager', 'Axeldiameter', 'Bussning', 'Kilrem'],
-  Aggregat: ['Filter', 'Objektskylt', 'Spjäll', 'Värmebatteri'],
-  Övrigt: []
+  Motor: ['Motorskylt', 'Remskiva', 'Bussning', 'Axeldiameter', 'Lager'],
+  Fl\u00e4kt: ['Remskiva', 'Bussning', 'Axeldiameter', 'Lager'],
+  Aggregat: ['Kilrem', 'Filter', 'Kolfilter'],
+  \u00d6vrigt: ['Notering']
 };
 
 const DEPARTMENT_PRESETS = [
@@ -100,9 +100,9 @@ const CAPTURE_TASKS: CaptureTask[] = [
   },
   {
     id: 'flakt',
-    label: 'Fläkt',
-    description: 'Fläkttyp, diameter och rotationsriktning.',
-    componentType: 'Fläkt'
+    label: 'Fl\u00e4kt',
+    description: 'Fl\u00e4kttyp, diameter och rotationsriktning.',
+    componentType: 'Fl\u00e4kt'
   }
 ];
 
@@ -167,13 +167,13 @@ function getDefaultScopeForTask(task: CaptureTask): {
     case 'motor':
       return { assembly: 'Motor', subComponent: 'Motorskylt' };
     case 'flakt':
-      return { assembly: 'Fläkt', subComponent: 'Fläkthjul' };
+      return { assembly: 'Fl\u00e4kt', subComponent: 'Lager' };
     case 'remskiva':
       return { assembly: 'Motor', subComponent: 'Remskiva' };
     case 'lager':
       return { assembly: 'Motor', subComponent: 'Lager' };
     case 'kilrem':
-      return { assembly: 'Motor', subComponent: 'Kilrem' };
+      return { assembly: 'Aggregat', subComponent: 'Kilrem' };
     case 'filter':
       return { assembly: 'Aggregat', subComponent: 'Filter' };
     default:
@@ -188,19 +188,137 @@ function getDefaultScopeForComponentType(componentType: ComponentType): {
   switch (componentType) {
     case 'Motor':
       return { assembly: 'Motor', subComponent: 'Motorskylt' };
-    case 'Fläkt':
-      return { assembly: 'Fläkt', subComponent: 'Fläkthjul' };
+    case 'Fl\u00e4kt':
+      return { assembly: 'Fl\u00e4kt', subComponent: 'Lager' };
+    case 'Motorskylt':
+      return { assembly: 'Motor', subComponent: 'Motorskylt' };
     case 'Remskiva':
       return { assembly: 'Motor', subComponent: 'Remskiva' };
+    case 'Bussning':
+      return { assembly: 'Motor', subComponent: 'Bussning' };
+    case 'Axeldiameter':
+      return { assembly: 'Motor', subComponent: 'Axeldiameter' };
     case 'Lager':
       return { assembly: 'Motor', subComponent: 'Lager' };
     case 'Kilrem':
-      return { assembly: 'Motor', subComponent: 'Kilrem' };
+      return { assembly: 'Aggregat', subComponent: 'Kilrem' };
     case 'Filter':
       return { assembly: 'Aggregat', subComponent: 'Filter' };
+    case 'Kolfilter':
+      return { assembly: 'Aggregat', subComponent: 'Kolfilter' };
+    case '\u00d6vrigt':
+      return { assembly: '\u00d6vrigt', subComponent: 'Notering' };
     default:
-      return { assembly: 'Övrigt', subComponent: componentType };
+      return { assembly: '\u00d6vrigt', subComponent: componentType };
   }
+}
+
+const SUB_COMPONENT_COMPONENT_TYPE_MAP: Record<string, ComponentType> = {
+  motorskylt: 'Motorskylt',
+  remskiva: 'Remskiva',
+  bussning: 'Bussning',
+  axeldiameter: 'Axeldiameter',
+  lager: 'Lager',
+  kilrem: 'Kilrem',
+  filter: 'Filter',
+  kolfilter: 'Kolfilter',
+  notering: '\u00d6vrigt'
+};
+
+const MULTI_ENTRY_COMPONENT_TYPES = new Set<ComponentType>([
+  'Filter',
+  'Kolfilter',
+  '\u00d6vrigt'
+]);
+
+function normalizeScopeToken(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function resolveComponentTypeFromScope(
+  assembly: AssemblyOption,
+  subComponent: string
+): ComponentType {
+  const assemblyToken = normalizeScopeToken(assembly);
+  const subToken = normalizeScopeToken(subComponent);
+
+  if (assemblyToken === 'ovrigt') {
+    return '\u00d6vrigt';
+  }
+
+  if (subToken in SUB_COMPONENT_COMPONENT_TYPE_MAP) {
+    return SUB_COMPONENT_COMPONENT_TYPE_MAP[subToken];
+  }
+
+  if (assemblyToken === 'aggregat') {
+    return 'Kilrem';
+  }
+
+  if (assemblyToken === 'motor' || assemblyToken === 'flakt') {
+    return 'Lager';
+  }
+
+  return '\u00d6vrigt';
+}
+
+function splitManualLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function buildIdentifiedValue(
+  componentType: ComponentType,
+  identifiedValue: string,
+  attributes: Record<string, string>
+): string {
+  const direct = identifiedValue.trim();
+  if (direct) {
+    return direct;
+  }
+
+  if (componentType === 'Lager') {
+    const front = attributes.lagerFram?.trim();
+    const back = attributes.lagerBak?.trim();
+
+    if (front && back) {
+      return `Fram: ${front}, Bak: ${back}`;
+    }
+
+    return front || back || '';
+  }
+
+  if (componentType === 'Remskiva') {
+    return attributes.remskivaNamn?.trim() || '';
+  }
+
+  if (componentType === 'Bussning') {
+    return attributes.bussningStorlek?.trim() || '';
+  }
+
+  if (componentType === 'Axeldiameter') {
+    const mm = attributes.axeldiameterMm?.trim();
+    return mm ? `${mm} mm` : '';
+  }
+
+  if (componentType === 'Motorskylt') {
+    return attributes.motorModell?.trim() || '';
+  }
+
+  if (componentType === 'Filter' || componentType === 'Kolfilter') {
+    return attributes.filterNamn?.trim() || '';
+  }
+
+  return '';
+}
+
+function isMultiEntryComponentType(componentType: ComponentType): boolean {
+  return MULTI_ENTRY_COMPONENT_TYPES.has(componentType);
 }
 
 export default function HomePage() {
@@ -223,9 +341,10 @@ export default function HomePage() {
   const [captureSubComponent, setCaptureSubComponent] = useState('Motorskylt');
 
   const [manualComponentType, setManualComponentType] = useState<ComponentType>('Kilrem');
-  const [manualAssembly, setManualAssembly] = useState<AssemblyOption>('Motor');
+  const [manualAssembly, setManualAssembly] = useState<AssemblyOption>('Aggregat');
   const [manualSubComponent, setManualSubComponent] = useState('Kilrem');
   const [manualValue, setManualValue] = useState('');
+  const [manualExtraValues, setManualExtraValues] = useState('');
   const [manualAttributes, setManualAttributes] = useState<Record<string, string>>(
     () => createEmptyAttributes('Kilrem')
   );
@@ -234,7 +353,7 @@ export default function HomePage() {
 
   const [editingComponentId, setEditingComponentId] = useState<string | null>(null);
   const [editingComponentType, setEditingComponentType] = useState<ComponentType>('Kilrem');
-  const [editingAssembly, setEditingAssembly] = useState<AssemblyOption>('Motor');
+  const [editingAssembly, setEditingAssembly] = useState<AssemblyOption>('Aggregat');
   const [editingSubComponent, setEditingSubComponent] = useState('Kilrem');
   const [editingIdentifiedValue, setEditingIdentifiedValue] = useState('');
   const [editingAttributes, setEditingAttributes] = useState<Record<string, string>>(
@@ -311,6 +430,7 @@ export default function HomePage() {
     () => SUB_COMPONENT_PRESETS[editingAssembly] ?? [],
     [editingAssembly]
   );
+  const manualAllowsMultiple = isMultiEntryComponentType(manualComponentType);
 
   const clearFeedback = () => {
     setError(null);
@@ -320,7 +440,7 @@ export default function HomePage() {
   const resetComponentEditing = () => {
     setEditingComponentId(null);
     setEditingComponentType('Kilrem');
-    setEditingAssembly('Motor');
+    setEditingAssembly('Aggregat');
     setEditingSubComponent('Kilrem');
     setEditingIdentifiedValue('');
     setEditingAttributes(createEmptyAttributes('Kilrem'));
@@ -355,6 +475,7 @@ export default function HomePage() {
     setManualSubComponent(manualDefaults.subComponent);
     setManualComponentType('Kilrem');
     setManualValue('');
+    setManualExtraValues('');
     setManualAttributes(createEmptyAttributes('Kilrem'));
     setManualNotes('');
     resetComponentEditing();
@@ -648,70 +769,101 @@ export default function HomePage() {
     setCapturedPhotos({});
     setSelectedTaskId('kilrem');
     setMode('lagg-till');
-    setStatus(`Öppnade aggregat ${aggregate.systemPositionId} för redigering.`);
+    setStatus(`\u00d6ppnade aggregat ${aggregate.systemPositionId} f\u00f6r redigering.`);
   };
 
-  const handleManualTypeChange = (nextType: ComponentType) => {
-    const defaults = getDefaultScopeForComponentType(nextType);
+  const handleManualAssemblyChange = (nextAssembly: AssemblyOption) => {
+    const nextSubComponent = (SUB_COMPONENT_PRESETS[nextAssembly] ?? [])[0] ?? 'Notering';
+    const nextType = resolveComponentTypeFromScope(nextAssembly, nextSubComponent);
+    setManualAssembly(nextAssembly);
+    setManualSubComponent(nextSubComponent);
     setManualComponentType(nextType);
-    setManualAssembly(defaults.assembly);
-    setManualSubComponent(defaults.subComponent);
     setManualValue('');
+    setManualExtraValues('');
     setManualAttributes(createEmptyAttributes(nextType));
     setManualNotes('');
+  };
+
+  const handleManualSubComponentChange = (nextSubComponent: string) => {
+    const nextType = resolveComponentTypeFromScope(manualAssembly, nextSubComponent);
+    setManualSubComponent(nextSubComponent);
+    setManualComponentType(nextType);
+    setManualValue('');
+    setManualExtraValues('');
+    setManualAttributes(createEmptyAttributes(nextType));
   };
 
   const handleManualSave = async () => {
     clearFeedback();
 
     if (!aggregateReady || !currentAggregate) {
-      setError('Skapa aggregatet via objektskylt först innan manuell registrering.');
-      return;
-    }
-
-    if (!manualValue.trim()) {
-      setError('Identifierat värde krävs för manuell registrering.');
+      setError('Skapa aggregatet via objektskylt forst innan manuell registrering.');
       return;
     }
 
     if (!manualAssembly.trim()) {
-      setError('Huvudkategori krävs för manuell registrering.');
+      setError('Huvudkategori kravs for manuell registrering.');
       return;
     }
 
     if (!manualSubComponent.trim()) {
-      setError('Underkategori krävs för manuell registrering.');
+      setError('Underkategori kravs for manuell registrering.');
       return;
     }
 
-    const missing = COMPONENT_FIELD_CONFIG[manualComponentType]
-      .filter((field) => !manualAttributes[field.key]?.trim())
-      .map((field) => field.label);
+    const resolvedType = resolveComponentTypeFromScope(
+      manualAssembly,
+      manualSubComponent.trim()
+    );
+
+    const identifiedValue = buildIdentifiedValue(
+      resolvedType,
+      manualValue,
+      manualAttributes
+    );
+
+    const valuesToSave = [
+      identifiedValue,
+      ...(manualAllowsMultiple ? splitManualLines(manualExtraValues) : [])
+    ].filter(Boolean);
+
+    if (valuesToSave.length === 0) {
+      setError('Identifierat varde kravs for manuell registrering.');
+      return;
+    }
+
+    const missing = getMissingRequiredFields(resolvedType, manualAttributes).map(
+      (field) => field.label
+    );
 
     if (missing.length > 0) {
-      setError(`Fyll i obligatoriska fält: ${missing.join(', ')}.`);
+      setError(`Fyll i obligatoriska falt: ${missing.join(', ')}.`);
       return;
     }
 
     setIsSavingManual(true);
 
     try {
-      const updated = await addAggregateComponent(currentAggregate.id, {
-        componentType: manualComponentType,
-        identifiedValue: manualValue.trim(),
-        assembly: manualAssembly,
-        subComponent: manualSubComponent.trim(),
-        attributes: manualAttributes,
-        notes: manualNotes.trim() || 'Manuellt registrerad post.'
-      });
+      let updated = currentAggregate;
+      for (const value of valuesToSave) {
+        updated = await addAggregateComponent(updated.id, {
+          componentType: resolvedType,
+          identifiedValue: value,
+          assembly: manualAssembly,
+          subComponent: manualSubComponent.trim(),
+          attributes: manualAttributes,
+          notes: manualNotes.trim() || 'Manuellt registrerad post.'
+        });
+      }
 
       setCurrentAggregate(updated);
       syncAggregateInSearchResults(updated);
       setManualValue('');
-      setManualAttributes(createEmptyAttributes(manualComponentType));
+      setManualExtraValues('');
+      setManualAttributes(createEmptyAttributes(resolvedType));
       setManualNotes('');
       setStatus(
-        `${manualComponentType} sparad manuellt (${manualAssembly} / ${manualSubComponent.trim()}) i biblioteket.`
+        `${valuesToSave.length} post(er) sparade manuellt (${manualAssembly} / ${manualSubComponent.trim()}).`
       );
     } catch (manualError) {
       setError(`Kunde inte spara manuell post: ${String(manualError)}`);
@@ -747,11 +899,19 @@ export default function HomePage() {
     setEditingNotes(component.notes ?? '');
   };
 
-  const handleEditingTypeChange = (nextType: ComponentType) => {
-    const defaults = getDefaultScopeForComponentType(nextType);
+  const handleEditingAssemblyChange = (nextAssembly: AssemblyOption) => {
+    const nextSubComponent = (SUB_COMPONENT_PRESETS[nextAssembly] ?? [])[0] ?? 'Notering';
+    const nextType = resolveComponentTypeFromScope(nextAssembly, nextSubComponent);
+    setEditingAssembly(nextAssembly);
+    setEditingSubComponent(nextSubComponent);
     setEditingComponentType(nextType);
-    setEditingAssembly(defaults.assembly);
-    setEditingSubComponent(defaults.subComponent);
+    setEditingAttributes(createEmptyAttributes(nextType));
+  };
+
+  const handleEditingSubComponentChange = (nextSubComponent: string) => {
+    const nextType = resolveComponentTypeFromScope(editingAssembly, nextSubComponent);
+    setEditingSubComponent(nextSubComponent);
+    setEditingComponentType(nextType);
     setEditingAttributes(createEmptyAttributes(nextType));
   };
 
@@ -759,31 +919,42 @@ export default function HomePage() {
     clearFeedback();
 
     if (!currentAggregate || !editingComponentId) {
-      setError('Ingen komponent vald för redigering.');
-      return;
-    }
-
-    if (!editingIdentifiedValue.trim()) {
-      setError('Identifierat värde krävs.');
+      setError('Ingen komponent vald for redigering.');
       return;
     }
 
     if (!editingAssembly.trim()) {
-      setError('Huvudkategori krävs.');
+      setError('Huvudkategori kravs.');
       return;
     }
 
     if (!editingSubComponent.trim()) {
-      setError('Underkategori krävs.');
+      setError('Underkategori kravs.');
       return;
     }
 
-    const missing = COMPONENT_FIELD_CONFIG[editingComponentType]
-      .filter((field) => !editingAttributes[field.key]?.trim())
-      .map((field) => field.label);
+    const resolvedType = resolveComponentTypeFromScope(
+      editingAssembly,
+      editingSubComponent.trim()
+    );
+
+    const identifiedValue = buildIdentifiedValue(
+      resolvedType,
+      editingIdentifiedValue,
+      editingAttributes
+    );
+
+    if (!identifiedValue.trim()) {
+      setError('Identifierat varde kravs.');
+      return;
+    }
+
+    const missing = getMissingRequiredFields(resolvedType, editingAttributes).map(
+      (field) => field.label
+    );
 
     if (missing.length > 0) {
-      setError(`Fyll i obligatoriska fält: ${missing.join(', ')}.`);
+      setError(`Fyll i obligatoriska falt: ${missing.join(', ')}.`);
       return;
     }
 
@@ -791,8 +962,8 @@ export default function HomePage() {
 
     try {
       const updated = await updateAggregateComponent(currentAggregate.id, editingComponentId, {
-        componentType: editingComponentType,
-        identifiedValue: editingIdentifiedValue.trim(),
+        componentType: resolvedType,
+        identifiedValue: identifiedValue.trim(),
         assembly: editingAssembly,
         subComponent: editingSubComponent.trim(),
         attributes: editingAttributes,
@@ -1156,26 +1327,12 @@ export default function HomePage() {
 
               <div className={styles.manualGrid}>
                 <label>
-                  Komponenttyp
-                  <select
-                    value={manualComponentType}
-                    onChange={(event) =>
-                      handleManualTypeChange(event.target.value as ComponentType)
-                    }
-                  >
-                    {COMPONENT_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
                   Huvudkategori
                   <select
                     value={manualAssembly}
-                    onChange={(event) => setManualAssembly(event.target.value as AssemblyOption)}
+                    onChange={(event) =>
+                      handleManualAssemblyChange(event.target.value as AssemblyOption)
+                    }
                   >
                     {ASSEMBLY_OPTIONS.map((option) => (
                       <option key={option} value={option}>
@@ -1187,27 +1344,37 @@ export default function HomePage() {
 
                 <label>
                   Underkategori
-                  <input
+                  <select
                     value={manualSubComponent}
-                    onChange={(event) => setManualSubComponent(event.target.value)}
-                    list='manual-subcomponent-presets'
-                    placeholder='Exempel: Remskiva fläktsida'
-                  />
-                  <datalist id='manual-subcomponent-presets'>
+                    onChange={(event) => handleManualSubComponentChange(event.target.value)}
+                  >
                     {manualSubComponentSuggestions.map((option) => (
-                      <option key={option} value={option} />
+                      <option key={`${manualAssembly}-${option}`} value={option}>
+                        {option}
+                      </option>
                     ))}
-                  </datalist>
+                  </select>
                 </label>
 
                 <label>
-                  Identifierat värde
+                  {manualComponentType === '\u00d6vrigt' ? 'Notering' : 'Identifierat varde'}
                   <input
                     value={manualValue}
                     onChange={(event) => setManualValue(event.target.value)}
                     placeholder='Exempel: SPA 1180, 6205-2RS C3'
                   />
                 </label>
+
+                {manualAllowsMultiple && (
+                  <label className={styles.fullRow}>
+                    Flera poster (en per rad)
+                    <textarea
+                      value={manualExtraValues}
+                      onChange={(event) => setManualExtraValues(event.target.value)}
+                      placeholder={'Exempel: Filter 2\nFilter 3'}
+                    />
+                  </label>
+                )}
 
                 {COMPONENT_FIELD_CONFIG[manualComponentType].map((field) => (
                   <label key={field.key}>
@@ -1291,27 +1458,11 @@ export default function HomePage() {
                         {isEditing ? (
                           <div className={styles.componentEditGrid}>
                             <label>
-                              Komponenttyp
-                              <select
-                                value={editingComponentType}
-                                onChange={(event) =>
-                                  handleEditingTypeChange(event.target.value as ComponentType)
-                                }
-                              >
-                                {COMPONENT_OPTIONS.map((option) => (
-                                  <option key={option} value={option}>
-                                    {option}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <label>
                               Huvudkategori
                               <select
                                 value={editingAssembly}
                                 onChange={(event) =>
-                                  setEditingAssembly(event.target.value as AssemblyOption)
+                                  handleEditingAssemblyChange(event.target.value as AssemblyOption)
                                 }
                               >
                                 {ASSEMBLY_OPTIONS.map((option) => (
@@ -1324,17 +1475,18 @@ export default function HomePage() {
 
                             <label>
                               Underkategori
-                              <input
+                              <select
                                 value={editingSubComponent}
-                                onChange={(event) => setEditingSubComponent(event.target.value)}
-                                list={`editing-subcomponent-${component.id}`}
-                                placeholder='Exempel: Remskiva motorsida'
-                              />
-                              <datalist id={`editing-subcomponent-${component.id}`}>
+                                onChange={(event) =>
+                                  handleEditingSubComponentChange(event.target.value)
+                                }
+                              >
                                 {editingSubComponentSuggestions.map((option) => (
-                                  <option key={option} value={option} />
+                                  <option key={`${editingAssembly}-${option}`} value={option}>
+                                    {option}
+                                  </option>
                                 ))}
-                              </datalist>
+                              </select>
                             </label>
 
                             <label>
@@ -1443,7 +1595,7 @@ export default function HomePage() {
                 onChange={(event) => setSortOrder(event.target.value as SortOrder)}
               >
                 <option value='nyast'>Senast uppdaterad</option>
-                <option value='aldst'>Äldst först</option>
+                <option value='aldst'>{'\u00c4ldst f\u00f6rst'}</option>
               </select>
             </label>
           </div>
@@ -1485,7 +1637,7 @@ export default function HomePage() {
                     className={styles.openButton}
                     onClick={() => handleOpenAggregateForEditing(aggregate)}
                   >
-                    Öppna för redigering
+                    {'\u00d6ppna f\u00f6r redigering'}
                   </button>
                   <button
                     className={styles.deleteButton}
