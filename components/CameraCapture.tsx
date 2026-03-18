@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 
 type Props = {
@@ -104,7 +104,7 @@ function loadImage(source: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Kunde inte läsa bildfilen.'));
+    image.onerror = () => reject(new Error('Kunde inte lÃ¤sa bildfilen.'));
     image.src = source;
   });
 }
@@ -133,49 +133,18 @@ async function normalizeImageDataUrl(dataUrl: string): Promise<string> {
 export function CameraCapture({
   onCapture,
   title = 'Fota objekt',
-  subtitle = 'Kameraläge',
-  captureLabel = 'Ta bild',
+  subtitle = 'Steg',
+  captureLabel = 'Ta foto med enhet',
   helperText,
   disabled = false,
   uploadLabel = 'Ladda upp foto'
 }: Props) {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const deviceCameraInputRef = useRef<HTMLInputElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   const [error, setError] = useState<string | null>(null);
-  const [isActive, setIsActive] = useState(false);
-  const [isStarting, setIsStarting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (disabled && isActive) {
-      stopCamera();
-    }
-  }, [disabled, isActive]);
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-
-    setIsActive(false);
-  };
 
   const emitCapture = async (dataUrl: string) => {
     if (!dataUrl.trim()) {
@@ -187,80 +156,6 @@ export function CameraCapture({
       await Promise.resolve(onCapture(dataUrl));
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const startCamera = async () => {
-    if (disabled || isActive || isStarting) {
-      return;
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError('Den här webbläsaren stöder inte livekamera. Använd uppladdning istället.');
-      return;
-    }
-
-    setError(null);
-    setIsStarting(true);
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
-      setIsActive(true);
-    } catch (err) {
-      console.error(err);
-      setError('Kan inte starta kameran. Kontrollera behörighet i webbläsaren.');
-      stopCamera();
-    } finally {
-      setIsStarting(false);
-    }
-  };
-
-  const handleCaptureFromLiveVideo = async () => {
-    const video = videoRef.current;
-    if (!video || !isActive || disabled || isSubmitting) {
-      return;
-    }
-
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-
-    if (!width || !height) {
-      setError('Kameran är inte redo än. Vänta en sekund och försök igen.');
-      return;
-    }
-
-    try {
-      const normalizedSize = fitWithinBounds(width, height, MAX_IMAGE_DIMENSION);
-      const canvas = document.createElement('canvas');
-      canvas.width = normalizedSize.width;
-      canvas.height = normalizedSize.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        throw new Error('Canvas kunde inte initieras.');
-      }
-
-      ctx.drawImage(video, 0, 0, normalizedSize.width, normalizedSize.height);
-      const dataUrl = encodeCanvasToJpeg(canvas, MAX_IMAGE_BYTES);
-      await emitCapture(dataUrl);
-      stopCamera();
-    } catch (captureError) {
-      console.error(captureError);
-      setError('Kunde inte ta bilden från livekameran. Försök igen.');
     }
   };
 
@@ -290,7 +185,7 @@ export function CameraCapture({
     return new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result ?? ''));
-      reader.onerror = () => reject(new Error('Kunde inte läsa filen.'));
+      reader.onerror = () => reject(new Error('Kunde inte lÃ¤sa filen.'));
       reader.readAsDataURL(file);
     });
   };
@@ -309,7 +204,7 @@ export function CameraCapture({
     try {
       const rawDataUrl = await readFileToDataUrl(file);
       if (!rawDataUrl) {
-        throw new Error('Filen är tom eller ogiltig.');
+        throw new Error('Filen Ã¤r tom eller ogiltig.');
       }
 
       const normalizedDataUrl = await normalizeImageDataUrl(rawDataUrl);
@@ -317,17 +212,16 @@ export function CameraCapture({
         throw new Error('Kunde inte bearbeta bilden.');
       }
 
-      stopCamera();
       await emitCapture(normalizedDataUrl);
     } catch (uploadError) {
       console.error(uploadError);
-      setError('Kunde inte läsa bilden. Prova ett annat foto eller ta nytt med kameran.');
+      setError('Kunde inte lÃ¤sa bilden. Prova ett annat foto eller ta nytt med kameran.');
     } finally {
       setIsUploading(false);
     }
   };
 
-  const actionsDisabled = disabled || isUploading || isStarting || isSubmitting;
+  const actionsDisabled = disabled || isUploading || isSubmitting;
 
   return (
     <section
@@ -352,67 +246,19 @@ export function CameraCapture({
           </p>
           <strong>{title}</strong>
         </div>
-        <span
-          style={{
-            fontSize: '0.75rem',
-            color: isActive ? '#34d399' : '#f87171'
-          }}
-        >
-          {isActive ? 'Live aktiv' : 'Live av'}
-        </span>
       </header>
 
       <div
         style={{
-          aspectRatio: '16 / 9',
           borderRadius: '0.75rem',
-          overflow: 'hidden',
-          position: 'relative',
+          textAlign: 'center',
+          padding: '1rem',
+          color: '#cbd5f5',
           background: '#020617',
           border: '1px solid rgba(148, 163, 184, 0.2)'
         }}
       >
-        {!isActive ? (
-          <div
-            style={{
-              display: 'grid',
-              placeItems: 'center',
-              height: '100%',
-              textAlign: 'center',
-              padding: '1rem',
-              color: '#cbd5f5',
-              gap: '0.5rem'
-            }}
-          >
-            <p style={{ margin: 0 }}>
-              Livekamera är avstängd. Du kan starta livekamera eller ladda upp en bild.
-            </p>
-            <button
-              onClick={startCamera}
-              disabled={actionsDisabled}
-              style={{
-                border: '1px solid rgba(56, 189, 248, 0.5)',
-                background: 'rgba(14, 165, 233, 0.16)',
-                color: '#e0f2fe',
-                borderRadius: '999px',
-                padding: '0.45rem 0.9rem',
-                cursor: actionsDisabled ? 'not-allowed' : 'pointer',
-                fontWeight: 600,
-                opacity: actionsDisabled ? 0.6 : 1
-              }}
-            >
-              {isStarting ? 'Startar livekamera...' : 'Starta livekamera'}
-            </button>
-          </div>
-        ) : (
-          <video
-            ref={videoRef}
-            playsInline
-            autoPlay
-            muted
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-        )}
+        VÃ¤lj hur du vill lÃ¤gga till bild fÃ¶r momentet.
       </div>
 
       {error && (
@@ -462,8 +308,8 @@ export function CameraCapture({
 
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
         <button
-          onClick={handleCaptureFromLiveVideo}
-          disabled={!isActive || actionsDisabled}
+          onClick={handlePickDeviceCamera}
+          disabled={actionsDisabled}
           style={{
             flex: 1,
             padding: '0.85rem',
@@ -474,27 +320,11 @@ export function CameraCapture({
             color: '#020617',
             fontWeight: 700,
             fontSize: '1rem',
-            cursor: !isActive || actionsDisabled ? 'not-allowed' : 'pointer',
-            opacity: !isActive || actionsDisabled ? 0.55 : 1
-          }}
-        >
-          {captureLabel}
-        </button>
-
-        <button
-          onClick={handlePickDeviceCamera}
-          disabled={actionsDisabled}
-          style={{
-            padding: '0.85rem 1rem',
-            borderRadius: '999px',
-            border: '1px solid rgba(148,163,184,0.45)',
-            background: 'rgba(15,23,42,0.65)',
-            color: '#e2e8f0',
             cursor: actionsDisabled ? 'not-allowed' : 'pointer',
             opacity: actionsDisabled ? 0.55 : 1
           }}
         >
-          Ta foto med enhet
+          {captureLabel}
         </button>
 
         <button
@@ -510,23 +340,7 @@ export function CameraCapture({
             opacity: actionsDisabled ? 0.55 : 1
           }}
         >
-          {isUploading ? 'Läser fil...' : uploadLabel}
-        </button>
-
-        <button
-          onClick={stopCamera}
-          disabled={!isActive || actionsDisabled}
-          style={{
-            padding: '0.85rem 1rem',
-            borderRadius: '999px',
-            border: '1px solid rgba(148,163,184,0.45)',
-            background: 'transparent',
-            color: '#e2e8f0',
-            cursor: !isActive || actionsDisabled ? 'not-allowed' : 'pointer',
-            opacity: !isActive || actionsDisabled ? 0.55 : 1
-          }}
-        >
-          Stäng live
+          {isUploading ? 'LÃ¤ser fil...' : uploadLabel}
         </button>
       </div>
     </section>

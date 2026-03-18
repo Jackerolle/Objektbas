@@ -438,6 +438,40 @@ export default function HomePage() {
     }
   };
 
+  const handleCreateAggregateManually = async () => {
+    clearFeedback();
+
+    if (currentAggregate) {
+      setStatus(`Aggregat ${currentAggregate.systemPositionId} är redan aktivt.`);
+      return;
+    }
+
+    const candidateId = normalizeSystemPositionId(systemPositionId);
+    if (!candidateId) {
+      setError('Ange Systemposition för att skapa aggregat manuellt.');
+      return;
+    }
+
+    setIsSavingAggregate(true);
+
+    try {
+      const created = await ensureAggregate(candidateId);
+      setCurrentAggregate(created);
+
+      const nextCaptured = {
+        ...capturedPhotos,
+        skylt: capturedPhotos.skylt || 'manual-entry'
+      };
+      setCapturedPhotos(nextCaptured);
+      setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
+      setStatus(`Aggregat ${created.systemPositionId} skapat manuellt.`);
+    } catch (manualCreateError) {
+      setError(`Kunde inte skapa aggregat manuellt: ${String(manualCreateError)}`);
+    } finally {
+      setIsSavingAggregate(false);
+    }
+  };
+
   const handleOpenAggregateForEditing = (aggregate: AggregateRecord) => {
     setCurrentAggregate(aggregate);
     setSystemPositionId(aggregate.systemPositionId);
@@ -502,6 +536,7 @@ export default function HomePage() {
   };
 
   const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
+  const selectedPhotoIsPreviewable = Boolean(selectedPhoto?.startsWith('data:image/'));
 
   return (
     <main className={styles.pageRoot}>
@@ -520,7 +555,7 @@ export default function HomePage() {
               mode === 'lagg-till' ? styles.modeButtonActive : ''
             }`}
           >
-            Registrera med foto
+            Lägg till aggregat
           </button>
           <button
             onClick={() => {
@@ -594,7 +629,7 @@ export default function HomePage() {
                 onCapture={handleCapture}
                 title={`Fotografera ${selectedTask.label.toLowerCase()}`}
                 subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
-                captureLabel={`Spara ${selectedTask.label}`}
+                captureLabel='Ta foto med enhet'
                 uploadLabel='Ladda upp foto'
                 helperText={
                   selectedTask.id === 'skylt'
@@ -604,7 +639,21 @@ export default function HomePage() {
                 disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
               />
 
-              {selectedPhoto && (
+              {selectedTask.id === 'skylt' && !aggregateReady && (
+                <div className={styles.libraryHint}>
+                  <strong>Ingen bild just nu?</strong>
+                  <p>Skapa aggregat manuellt nu och lägg till foto senare.</p>
+                  <button
+                    className={styles.manualSaveButton}
+                    onClick={() => void handleCreateAggregateManually()}
+                    disabled={isSavingAggregate || isProcessingCapture}
+                  >
+                    {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
+                  </button>
+                </div>
+              )}
+
+              {selectedPhoto && selectedPhotoIsPreviewable && (
                 <div className={styles.previewWrap}>
                   <p>Senaste bild: {selectedTask.label}</p>
                   <img src={selectedPhoto} alt={`Foto ${selectedTask.label}`} />
