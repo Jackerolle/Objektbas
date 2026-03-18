@@ -37,7 +37,7 @@ export async function fetchObjects(): Promise<Objekt[]> {
     });
 
     if (!response.ok) {
-      throw new Error('Misslyckades att hamta objekt');
+      throw new Error('Misslyckades att hämta objekt');
     }
 
     return (await response.json()) as Objekt[];

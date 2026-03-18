@@ -16,7 +16,7 @@ export async function GET(request: Request) {
     return NextResponse.json(results);
   } catch (error) {
     return NextResponse.json(
-      { error: `Kunde inte hamta aggregat: ${String(error)}` },
+      { error: `Kunde inte hämta aggregat: ${String(error)}` },
       { status: 500 }
     );
   }
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
 
     if (!payload.systemPositionId?.trim()) {
       return NextResponse.json(
-        { error: 'Systempositionens ID kravs.' },
+        { error: 'Systempositionens ID krävs.' },
         { status: 400 }
       );
     }

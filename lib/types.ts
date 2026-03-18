@@ -31,10 +31,11 @@ export type SyncState = 'idle' | 'syncing' | 'offline';
 export type AppMode = 'lagg-till' | 'sok';
 
 export type ComponentType =
-  | 'Motorbricka'
-  | 'Flakt'
-  | 'Kilrep'
-  | 'Remskivor'
+  | 'Motor'
+  | 'Fläkt'
+  | 'Kilrem'
+  | 'Remskiva'
+  | 'Lager'
   | 'Filter';
 
 export type SystemPositionAnalysis = {

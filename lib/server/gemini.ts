@@ -153,15 +153,15 @@ export async function analyzeSystemPositionWithGemini(
     return {
       systemPositionId: 'MANUELL-KRAVS',
       confidence: 0.15,
-      notes: 'GEMINI_API_KEY saknas. Bekrafta ID manuellt.',
+      notes: 'GEMINI_API_KEY saknas. Bekräfta ID manuellt.',
       provider: 'fallback',
       requiresManualConfirmation: true
     };
   }
 
   const prompt =
-    'Du ar OCR-assistent. Las endast systempositionens ID fran bilden. ' +
-    'Returnera ENDAST JSON med falten systemPositionId, confidence och notes. Inga markdown-block.';
+    'Du är OCR-assistent. Läs endast systempositionens ID från bilden. ' +
+    'Returnera ENDAST JSON med fälten systemPositionId, confidence och notes. Inga markdown-block.';
 
   const parsed = await callGemini(prompt, imageDataUrl);
   const systemPositionId = sanitizeSystemPositionId(parsed.systemPositionId) || 'OKAND';
@@ -180,7 +180,7 @@ export async function analyzeComponentWithGemini(
   imageDataUrl: string
 ): Promise<ComponentAnalysis> {
   if (!isKnownComponentType(componentType)) {
-    throw new Error('Okand komponenttyp.');
+    throw new Error('Okänd komponenttyp.');
   }
 
   const { apiKey } = getGeminiConfig();
@@ -188,9 +188,9 @@ export async function analyzeComponentWithGemini(
   if (!apiKey) {
     return {
       componentType,
-      identifiedValue: `Manuell avlasning: ${componentType}`,
+      identifiedValue: `Manuell avläsning: ${componentType}`,
       confidence: 0.1,
-      notes: 'GEMINI_API_KEY saknas. Fyll i falt manuellt.',
+      notes: 'GEMINI_API_KEY saknas. Fyll i fält manuellt.',
       provider: 'fallback',
       requiresManualConfirmation: true,
       suggestedAttributes: createEmptyAttributes(componentType)
@@ -201,9 +201,9 @@ export async function analyzeComponentWithGemini(
 
   const prompt =
     `Du analyserar ventilationskomponenten '${componentType}'. ` +
-    `Obligatoriska falt ar: ${requiredFields.join(', ')}. ` +
-    'Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
-    'suggestedAttributes ska vara ett objekt med nyckel/varde. Inga markdown-block.';
+    `Obligatoriska fält är: ${requiredFields.join(', ')}. ` +
+    'Returnera ENDAST JSON med fälten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
+    'suggestedAttributes ska vara ett objekt med nyckel/värde. Inga markdown-block.';
 
   const parsed = await callGemini(prompt, imageDataUrl);
 
@@ -214,9 +214,9 @@ export async function analyzeComponentWithGemini(
 
   return {
     componentType,
-    identifiedValue: parsed.identifiedValue?.trim() || `Okand ${componentType}`,
+    identifiedValue: parsed.identifiedValue?.trim() || `Okänd ${componentType}`,
     confidence: clampConfidence(parsed.confidence),
-    notes: parsed.notes?.trim() || 'Bekrafta komponentdata innan sparning.',
+    notes: parsed.notes?.trim() || 'Bekräfta komponentdata innan sparning.',
     provider: 'gemini',
     requiresManualConfirmation: true,
     suggestedAttributes

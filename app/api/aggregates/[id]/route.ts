@@ -20,7 +20,7 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json(aggregate);
   } catch (error) {
     return NextResponse.json(
-      { error: `Kunde inte hamta aggregat: ${String(error)}` },
+      { error: `Kunde inte hämta aggregat: ${String(error)}` },
       { status: 500 }
     );
   }

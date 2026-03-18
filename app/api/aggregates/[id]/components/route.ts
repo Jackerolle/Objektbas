@@ -21,16 +21,16 @@ export async function POST(request: Request, context: RouteContext) {
     const payload = (await request.json()) as CreateAggregateComponentPayload;
 
     if (!payload.componentType?.trim()) {
-      return NextResponse.json({ error: 'Komponenttyp kravs.' }, { status: 400 });
+      return NextResponse.json({ error: 'Komponenttyp krävs.' }, { status: 400 });
     }
 
     if (!payload.identifiedValue?.trim()) {
-      return NextResponse.json({ error: 'Identifierat varde kravs.' }, { status: 400 });
+      return NextResponse.json({ error: 'Identifierat värde krävs.' }, { status: 400 });
     }
 
     if (!isKnownComponentType(payload.componentType)) {
       return NextResponse.json(
-        { error: 'Okand komponenttyp.' },
+        { error: 'Okänd komponenttyp.' },
         { status: 400 }
       );
     }
@@ -48,7 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
     if (missing.length > 0) {
       return NextResponse.json(
         {
-          error: `Falt saknas for ${payload.componentType}: ${missing
+          error: `Fält saknas för ${payload.componentType}: ${missing
             .map((field) => field.label)
             .join(', ')}.`
         },

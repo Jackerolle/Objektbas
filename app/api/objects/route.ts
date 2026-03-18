@@ -16,7 +16,7 @@ export async function GET() {
     return NextResponse.json(records);
   } catch (error) {
     return NextResponse.json(
-      { error: `Kunde inte hamta objekt: ${String(error)}` },
+      { error: `Kunde inte hämta objekt: ${String(error)}` },
       { status: 500 }
     );
   }
@@ -27,13 +27,13 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as CreateObjectRequest;
 
     if (!payload.name?.trim()) {
-      return NextResponse.json({ error: 'Namn kravs.' }, { status: 400 });
+      return NextResponse.json({ error: 'Namn krävs.' }, { status: 400 });
     }
 
     const created = await createObjectRecord({
       name: payload.name.trim(),
-      category: payload.category?.trim() || 'Okand',
-      location: payload.location?.trim() || 'Okand',
+      category: payload.category?.trim() || 'Okänd',
+      location: payload.location?.trim() || 'Okänd',
       tags: Array.isArray(payload.tags) ? payload.tags.filter(Boolean) : []
     });
 

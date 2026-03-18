@@ -13,7 +13,7 @@ export async function GET() {
     return NextResponse.json(records);
   } catch (error) {
     return NextResponse.json(
-      { error: `Kunde inte hamta observationer: ${String(error)}` },
+      { error: `Kunde inte hämta observationer: ${String(error)}` },
       { status: 500 }
     );
   }
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const payload = (await request.json()) as ObservationPayload;
 
     if (!payload.objectId?.trim()) {
-      return NextResponse.json({ error: 'objectId kravs.' }, { status: 400 });
+      return NextResponse.json({ error: 'objectId krävs.' }, { status: 400 });
     }
 
     const created = await createObservationRecord({

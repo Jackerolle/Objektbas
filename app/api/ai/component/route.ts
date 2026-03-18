@@ -12,7 +12,7 @@ export async function POST(request: Request) {
 
     if (!body.componentType?.trim() || !body.imageDataUrl?.trim()) {
       return NextResponse.json(
-        { error: 'Komponenttyp och bild kravs.' },
+        { error: 'Komponenttyp och bild krävs.' },
         { status: 400 }
       );
     }

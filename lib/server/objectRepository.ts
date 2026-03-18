@@ -58,7 +58,7 @@ function toEquipment(
 
       return {
         id: typeof row.id === 'string' && row.id.trim() ? row.id : `eq-${index + 1}`,
-        name: typeof row.name === 'string' ? row.name : 'Okand del',
+        name: typeof row.name === 'string' ? row.name : 'Okänd del',
         quantity: typeof row.quantity === 'number' ? row.quantity : 1,
         status
       };

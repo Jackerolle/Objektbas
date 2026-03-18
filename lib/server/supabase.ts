@@ -8,7 +8,7 @@ export function getSupabaseServerClient() {
 
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error(
-      'SUPABASE_URL (eller NEXT_PUBLIC_SUPABASE_URL) och SUPABASE_SERVICE_ROLE_KEY maste vara satta.'
+      'SUPABASE_URL (eller NEXT_PUBLIC_SUPABASE_URL) och SUPABASE_SERVICE_ROLE_KEY måste vara satta.'
     );
   }
 
