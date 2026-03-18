@@ -30,6 +30,8 @@ function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+const DEFAULT_COMPONENT_TYPE: ComponentType = COMPONENT_OPTIONS[0];
+
 export default function HomePage() {
   const [mode, setMode] = useState<AppMode>('lagg-till');
 
@@ -41,11 +43,11 @@ export default function HomePage() {
   const [systemAnalysis, setSystemAnalysis] = useState<SystemPositionAnalysis | null>(null);
 
   const [currentAggregate, setCurrentAggregate] = useState<AggregateRecord | null>(null);
-  const [componentType, setComponentType] = useState<ComponentType>('Motorbricka');
+  const [componentType, setComponentType] = useState<ComponentType>(DEFAULT_COMPONENT_TYPE);
   const [componentImage, setComponentImage] = useState<string | null>(null);
   const [componentValue, setComponentValue] = useState('');
   const [componentAttributes, setComponentAttributes] = useState<Record<string, string>>(
-    () => createEmptyAttributes('Motorbricka')
+    () => createEmptyAttributes(DEFAULT_COMPONENT_TYPE)
   );
   const [componentNotes, setComponentNotes] = useState('');
   const [componentAnalysis, setComponentAnalysis] = useState<ComponentAnalysis | null>(null);
@@ -108,8 +110,7 @@ export default function HomePage() {
         systemPositionId: systemPositionId.trim(),
         position: position.trim() || undefined,
         department: department.trim() || undefined,
-        notes: aggregateNotes.trim() || undefined,
-        systemPositionImageDataUrl: systemPositionImage || undefined
+        notes: aggregateNotes.trim() || undefined
       });
 
       setCurrentAggregate(aggregate);
@@ -183,7 +184,6 @@ export default function HomePage() {
         componentType,
         identifiedValue: componentValue.trim(),
         notes: componentNotes.trim() || undefined,
-        imageDataUrl: componentImage || undefined,
         attributes: componentAttributes
       });
 
