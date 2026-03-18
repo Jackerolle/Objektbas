@@ -14,7 +14,12 @@ import {
   COMPONENT_OPTIONS,
   createEmptyAttributes
 } from '@/lib/componentSchema';
-import { AggregateRecord, AppMode, ComponentType } from '@/lib/types';
+import {
+  AggregateRecord,
+  AppMode,
+  ComponentType,
+  SystemPositionAnalysis
+} from '@/lib/types';
 import { useMemo, useState } from 'react';
 import styles from './page.module.css';
 
@@ -122,6 +127,19 @@ function normalizeAutoAttributes(
   return template;
 }
 
+function normalizeSystemPositionId(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
 export default function HomePage() {
   const [mode, setMode] = useState<AppMode>('lagg-till');
 
@@ -202,7 +220,7 @@ export default function HomePage() {
   };
 
   const buildAggregatePayload = (systemId: string, imageDataUrl?: string) => ({
-    systemPositionId: systemId.trim(),
+    systemPositionId: normalizeSystemPositionId(systemId),
     position: position.trim() || undefined,
     department: department.trim() || undefined,
     notes: aggregateNotes.trim() || undefined,
@@ -227,7 +245,7 @@ export default function HomePage() {
       return currentAggregate;
     }
 
-    const candidateId = forcedSystemPositionId?.trim() || systemPositionId.trim();
+    const candidateId = normalizeSystemPositionId(forcedSystemPositionId || systemPositionId);
     if (!candidateId) {
       throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
     }
@@ -265,9 +283,23 @@ export default function HomePage() {
 
     try {
       if (task.id === 'skylt') {
-        const analysis = await analyzeSystemPosition(imageDataUrl);
-        const aiId = analysis.systemPositionId?.trim();
-        const resolvedId = aiId && aiId !== 'MANUELL-KRAVS' ? aiId : systemPositionId.trim();
+        let analysis: SystemPositionAnalysis;
+
+        try {
+          analysis = await analyzeSystemPosition(imageDataUrl);
+        } catch (analysisError) {
+          analysis = {
+            systemPositionId: 'MANUELL-KRAVS',
+            confidence: 0.1,
+            notes: `AI-analys misslyckades: ${String(analysisError).slice(0, 120)}`,
+            provider: 'fallback',
+            requiresManualConfirmation: true
+          };
+        }
+
+        const aiId = normalizeSystemPositionId(analysis.systemPositionId);
+        const manualId = normalizeSystemPositionId(systemPositionId);
+        const resolvedId = aiId && aiId !== 'MANUELL-KRAVS' ? aiId : manualId;
 
         if (!resolvedId) {
           throw new Error(
@@ -289,10 +321,14 @@ export default function HomePage() {
         setCapturedPhotos(nextCaptured);
         setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
 
+        const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
+        const usedManual = !aiId || aiId === 'MANUELL-KRAVS';
         setStatus(
-          `Objektskylt tolkad (${toPercent(
-            analysis.confidence
-          )}) och aggregat sparat. Fortsätt med komponentfoton.`
+          usedManual
+            ? `Objektskylt sparad med manuellt ID ${resolvedId}.${analysisNote}`
+            : `Objektskylt tolkad (${toPercent(
+                analysis.confidence
+              )}) och aggregat sparat. Fortsätt med komponentfoton.${analysisNote}`
         );
         return;
       }
@@ -357,7 +393,7 @@ export default function HomePage() {
       const updated = await updateAggregate(
         currentAggregate.id,
         buildAggregatePayload(
-          systemPositionId,
+          normalizeSystemPositionId(systemPositionId),
           currentAggregate.systemPositionImageDataUrl
         )
       );

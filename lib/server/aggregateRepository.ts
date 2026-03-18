@@ -169,11 +169,33 @@ export async function createAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord> {
   const supabase = getSupabaseServerClient();
+  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('ventilation_aggregates')
+    .select('id')
+    .ilike('system_position_id', normalizedSystemPositionId)
+    .order('updated_at', { ascending: false })
+    .limit(1);
+
+  assertNoError(existingError);
+
+  const existingId = (existingRows as Array<{ id: string }> | null)?.[0]?.id;
+  if (existingId) {
+    const updated = await updateAggregateRecord(existingId, {
+      ...payload,
+      systemPositionId: normalizedSystemPositionId
+    });
+
+    if (updated) {
+      return updated;
+    }
+  }
 
   const { data, error } = await supabase
     .from('ventilation_aggregates')
     .insert({
-      system_position_id: payload.systemPositionId,
+      system_position_id: normalizedSystemPositionId,
       position: payload.position ?? null,
       department: payload.department ?? null,
       notes: payload.notes ?? null,
@@ -192,11 +214,12 @@ export async function updateAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord | null> {
   const supabase = getSupabaseServerClient();
+  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
 
   const { data, error } = await supabase
     .from('ventilation_aggregates')
     .update({
-      system_position_id: payload.systemPositionId,
+      system_position_id: normalizedSystemPositionId,
       position: payload.position ?? null,
       department: payload.department ?? null,
       notes: payload.notes ?? null,
