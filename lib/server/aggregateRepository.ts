@@ -165,6 +165,61 @@ export async function getAggregateById(id: string): Promise<AggregateRecord | nu
   return mapAggregate(aggregate, componentMap.get(id) ?? []);
 }
 
+export async function findLatestAggregateBySystemPositionId(
+  systemPositionId: string
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('ventilation_aggregates')
+    .select('*')
+    .eq('system_position_id', systemPositionId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  return getAggregateById((data as AggregateRow).id);
+}
+
+export async function updateAggregateMetadata(
+  aggregateId: string,
+  fields: Pick<CreateAggregatePayload, 'position' | 'department' | 'notes'>
+): Promise<AggregateRecord | null> {
+  const patch: Record<string, string> = {};
+
+  if (fields.position?.trim()) {
+    patch.position = fields.position.trim();
+  }
+
+  if (fields.department?.trim()) {
+    patch.department = fields.department.trim();
+  }
+
+  if (fields.notes?.trim()) {
+    patch.notes = fields.notes.trim();
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return getAggregateById(aggregateId);
+  }
+
+  const supabase = getSupabaseServerClient();
+  const { error } = await supabase
+    .from('ventilation_aggregates')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', aggregateId);
+
+  assertNoError(error);
+
+  return getAggregateById(aggregateId);
+}
+
 export async function createAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord> {

@@ -1,6 +1,7 @@
 ﻿import { NextResponse } from 'next/server';
 import { getAggregateById } from '@/lib/server/aggregateRepository';
 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type RouteContext = {

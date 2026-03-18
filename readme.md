@@ -132,3 +132,26 @@ Se ocksa `.env.example`.
 - `POST /api/aggregates` skapar poster i Supabase.
 - `POST /api/aggregates/{id}/components` validerar obligatoriska falt.
 - Sok i appen visar sparade poster fran Supabase.
+
+## Excel-import av aggregat
+Webbappen har nu ett eget `Importera`-lage.
+Importen sker i tva steg: `Forhandsgranska` (ingen skrivning) -> `Importera fil` (sparar i Supabase).
+
+### Stodda filtyper
+- `.xlsx`
+- `.xls`
+- `.csv`
+
+### Viktiga kolumner i filen
+- `systemPositionId` (obligatorisk)
+- `position`
+- `department`
+- `notes`
+- `componentType` (valfri per rad)
+- `identifiedValue` (valfri per rad)
+- `componentNotes`
+- `attr_*` for komponentattribut, t.ex. `attr_profil`, `attr_langd`, `attr_antal`
+
+API-routes for import:
+- `POST /api/import/aggregates?dryRun=true` (forhandsgranskning)
+- `POST /api/import/aggregates` (faktisk import)

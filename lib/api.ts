@@ -1,16 +1,17 @@
-import { mockObjects } from './mockData';
+﻿import { mockObjects } from './mockData';
 import {
   AggregateRecord,
   ComponentAnalysis,
   CreateAggregateComponentPayload,
   CreateAggregatePayload,
+  ImportAggregatesResult,
+  ImportPreviewResult,
   ObservationPayload,
   Objekt,
   SystemPositionAnalysis
 } from './types';
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ?? '';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ?? '';
 
 function toApiUrl(path: string): string {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -119,11 +120,14 @@ export async function addAggregateComponent(
   aggregateId: string,
   payload: CreateAggregateComponentPayload
 ): Promise<AggregateRecord> {
-  const response = await fetch(toApiUrl(`/api/aggregates/${aggregateId}/components`), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+  const response = await fetch(
+    toApiUrl(`/api/aggregates/${aggregateId}/components`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }
+  );
 
   if (!response.ok) {
     throw new Error(await parseError(response));
@@ -147,4 +151,40 @@ export async function searchAggregates(query: string): Promise<AggregateRecord[]
   }
 
   return (await response.json()) as AggregateRecord[];
+}
+
+export async function previewAggregatesFile(
+  file: File
+): Promise<ImportPreviewResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(toApiUrl('/api/import/aggregates?dryRun=true'), {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as ImportPreviewResult;
+}
+
+export async function importAggregatesFile(
+  file: File
+): Promise<ImportAggregatesResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(toApiUrl('/api/import/aggregates'), {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as ImportAggregatesResult;
 }

@@ -6,6 +6,8 @@ import {
   analyzeComponentImage,
   analyzeSystemPosition,
   createAggregate,
+  importAggregatesFile,
+  previewAggregatesFile,
   searchAggregates
 } from '@/lib/api';
 import {
@@ -13,7 +15,15 @@ import {
   COMPONENT_OPTIONS,
   createEmptyAttributes
 } from '@/lib/componentSchema';
-import { AggregateRecord, AppMode, ComponentAnalysis, ComponentType, SystemPositionAnalysis } from '@/lib/types';
+import {
+  AggregateRecord,
+  AppMode,
+  ComponentAnalysis,
+  ComponentType,
+  ImportAggregatesResult,
+  ImportPreviewResult,
+  SystemPositionAnalysis
+} from '@/lib/types';
 import { useState } from 'react';
 
 function toPercent(value: number): string {
@@ -42,12 +52,18 @@ export default function HomePage() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AggregateRecord[]>([]);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
+  const [importResult, setImportResult] = useState<ImportAggregatesResult | null>(null);
+  const [importPreviewFingerprint, setImportPreviewFingerprint] = useState<string | null>(null);
 
   const [isAnalyzingSystem, setIsAnalyzingSystem] = useState(false);
   const [isCreatingAggregate, setIsCreatingAggregate] = useState(false);
   const [isAnalyzingComponent, setIsAnalyzingComponent] = useState(false);
   const [isSavingComponent, setIsSavingComponent] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isPreviewingImport, setIsPreviewingImport] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('');
@@ -56,6 +72,9 @@ export default function HomePage() {
     setError(null);
     setStatus('');
   };
+
+  const getImportFingerprint = (file: File) =>
+    `${file.name}:${file.size}:${file.lastModified}`;
 
   const handleSystemCapture = async (imageDataUrl: string) => {
     clearStatus();
@@ -198,6 +217,77 @@ export default function HomePage() {
     }
   };
 
+  const handleDownloadTemplate = () => {
+    const csv = [
+      'systemPositionId,position,department,notes,componentType,identifiedValue,componentNotes,attr_profil,attr_langd,attr_antal',
+      'VP-1001,Takplan 2,Produktion,Importerad post,Kilrep,SPA 1180,Bytt i januari,SPA,1180,2',
+      'VP-1001,Takplan 2,Produktion,Importerad post,Filter,F7 595x595x48,Kontrollerad,,,'
+    ].join('\\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'aggregat-import-template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePreviewImport = async () => {
+    clearStatus();
+
+    if (!importFile) {
+      setError('Valj en Excel- eller CSV-fil for forhandsgranskning.');
+      return;
+    }
+
+    setIsPreviewingImport(true);
+
+    try {
+      const preview = await previewAggregatesFile(importFile);
+      setImportPreview(preview);
+      setImportPreviewFingerprint(getImportFingerprint(importFile));
+      setImportResult(null);
+      setStatus(
+        `Forhandsgranskning klar: ${preview.parsedAggregates} aggregat och ${preview.parsedComponents} komponenter hittades.`
+      );
+    } catch (previewError) {
+      setError(`Kunde inte forhandsgranska filen: ${String(previewError)}`);
+    } finally {
+      setIsPreviewingImport(false);
+    }
+  };
+
+  const handleImport = async () => {
+    clearStatus();
+
+    if (!importFile) {
+      setError('Valj en Excel- eller CSV-fil for import.');
+      return;
+    }
+
+    if (importPreviewFingerprint !== getImportFingerprint(importFile)) {
+      setError('Kor forhandsgranskning pa den valda filen innan import.');
+      return;
+    }
+
+    setIsImporting(true);
+
+    try {
+      const result = await importAggregatesFile(importFile);
+      setImportResult(result);
+      setStatus(
+        `Import klar: ${result.importedAggregates} aggregat och ${result.importedComponents} komponenter.`
+      );
+    } catch (importError) {
+      setError(`Kunde inte importera filen: ${String(importError)}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <main
       style={{
@@ -260,6 +350,20 @@ export default function HomePage() {
           }}
         >
           Sok
+        </button>
+        <button
+          onClick={() => setMode('importera')}
+          style={{
+            borderRadius: '999px',
+            border: mode === 'importera' ? '1px solid #60a5fa' : '1px solid rgba(148,163,184,0.3)',
+            background: mode === 'importera' ? 'rgba(37,99,235,0.25)' : 'transparent',
+            color: '#f8fafc',
+            padding: '0.55rem 1rem',
+            cursor: 'pointer',
+            fontWeight: 600
+          }}
+        >
+          Importera
         </button>
       </section>
 
@@ -611,7 +715,7 @@ export default function HomePage() {
             </section>
           )}
         </>
-      ) : (
+      ) : mode === 'sok' ? (
         <section
           style={{
             borderRadius: '1rem',
@@ -716,6 +820,171 @@ export default function HomePage() {
 
           {!isSearching && searchResults.length === 0 && (
             <p style={{ margin: 0, color: '#94a3b8' }}>Inga sparade poster hittades.</p>
+          )}
+        </section>
+      ) : (
+        <section
+          style={{
+            borderRadius: '1rem',
+            border: '1px solid rgba(148,163,184,0.25)',
+            background: '#0b1120',
+            padding: '1rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.9rem'
+          }}
+        >
+          <h2 style={{ margin: 0, fontSize: '1rem' }}>Importera aggregat fran Excel</h2>
+          <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>
+            Stod for `.xlsx`, `.xls` och `.csv`. En rad kan innehalla ett aggregat och valfri komponent.
+            Anvand kolumner som `systemPositionId`, `componentType`, `identifiedValue` och `attr_*` for attribut.
+            Kor forst `Forhandsgranska`, och importera sedan.
+          </p>
+
+          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type='file'
+              accept='.xlsx,.xls,.csv'
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setImportFile(file);
+                setImportPreview(null);
+                setImportResult(null);
+                setImportPreviewFingerprint(null);
+              }}
+              style={{
+                borderRadius: '0.7rem',
+                border: '1px solid rgba(148,163,184,0.4)',
+                padding: '0.55rem',
+                background: '#020617',
+                color: '#f8fafc'
+              }}
+            />
+            <button
+              onClick={handlePreviewImport}
+              disabled={isPreviewingImport}
+              style={{
+                borderRadius: '0.7rem',
+                border: 'none',
+                padding: '0.65rem 1rem',
+                background: 'linear-gradient(120deg, #14b8a6, #0ea5e9)',
+                color: '#f8fafc',
+                cursor: 'pointer',
+                fontWeight: 700,
+                opacity: isPreviewingImport ? 0.6 : 1
+              }}
+            >
+              {isPreviewingImport ? 'Forhandsgranskar...' : 'Forhandsgranska'}
+            </button>
+            <button
+              onClick={handleImport}
+              disabled={
+                isImporting ||
+                isPreviewingImport ||
+                !importFile ||
+                importPreviewFingerprint !==
+                  (importFile ? getImportFingerprint(importFile) : null)
+              }
+              style={{
+                borderRadius: '0.7rem',
+                border: 'none',
+                padding: '0.65rem 1rem',
+                background: 'linear-gradient(120deg, #0ea5e9, #2563eb)',
+                color: '#f8fafc',
+                cursor: 'pointer',
+                fontWeight: 700,
+                opacity:
+                  isImporting ||
+                  isPreviewingImport ||
+                  !importFile ||
+                  importPreviewFingerprint !==
+                    (importFile ? getImportFingerprint(importFile) : null)
+                    ? 0.6
+                    : 1
+              }}
+            >
+              {isImporting ? 'Importerar...' : 'Importera fil'}
+            </button>
+            <button
+              onClick={handleDownloadTemplate}
+              style={{
+                borderRadius: '0.7rem',
+                border: '1px solid rgba(148,163,184,0.6)',
+                padding: '0.65rem 1rem',
+                background: 'transparent',
+                color: '#f8fafc',
+                cursor: 'pointer',
+                fontWeight: 600
+              }}
+            >
+              Ladda ner mall (CSV)
+            </button>
+          </div>
+
+          {importFile && (
+            <p style={{ margin: 0, color: '#cbd5f5', fontSize: '0.85rem' }}>
+              Vald fil: <strong>{importFile.name}</strong>
+            </p>
+          )}
+
+          {importPreview && (
+            <section
+              style={{
+                borderRadius: '0.8rem',
+                border: '1px solid rgba(148,163,184,0.3)',
+                background: '#020617',
+                padding: '0.75rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.45rem'
+              }}
+            >
+              <p style={{ margin: 0, color: '#cbd5f5' }}>
+                Forhandsvisning: rader {importPreview.totalRows}, aggregat {importPreview.parsedAggregates}, komponenter {importPreview.parsedComponents}, hoppade over {importPreview.skippedRows}
+              </p>
+              {importPreview.previewAggregates.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: '1rem', color: '#93c5fd' }}>
+                  {importPreview.previewAggregates.slice(0, 8).map((aggregate) => (
+                    <li key={aggregate.systemPositionId}>
+                      <strong>{aggregate.systemPositionId}</strong>
+                      {aggregate.position ? ` (${aggregate.position})` : ''} - {aggregate.componentsCount} komponent(er)
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {importPreview.warnings.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: '1rem', color: '#fbbf24' }}>
+                  {importPreview.warnings.slice(0, 10).map((warning, index) => (
+                    <li key={`${warning}-${index}`}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {importResult && (
+            <section
+              style={{
+                borderRadius: '0.8rem',
+                border: '1px solid rgba(148,163,184,0.3)',
+                background: '#020617',
+                padding: '0.75rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.45rem'
+              }}
+            >
+              <p style={{ margin: 0, color: '#cbd5f5' }}>
+                Rader: {importResult.totalRows} | Aggregat: {importResult.importedAggregates} ({importResult.createdAggregates} skapade, {importResult.updatedAggregates} uppdaterade) | Komponenter: {importResult.importedComponents} | Hoppade over: {importResult.skippedRows}
+              </p>
+              {importResult.warnings.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: '1rem', color: '#fbbf24' }}>
+                  {importResult.warnings.slice(0, 10).map((warning, index) => (
+                    <li key={`${warning}-${index}`}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
           )}
         </section>
       )}

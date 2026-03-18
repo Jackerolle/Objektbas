@@ -1,7 +1,7 @@
 ﻿import {
   createEmptyAttributes,
-  isKnownComponentType,
-  normalizeAttributes
+  normalizeAttributes,
+  resolveComponentType
 } from '@/lib/componentSchema';
 import { ComponentAnalysis, SystemPositionAnalysis } from '@/lib/types';
 
@@ -65,7 +65,11 @@ function extractGeminiText(responseJson: unknown): string {
     }>;
   };
 
-  return root.candidates?.[0]?.content?.parts?.find((part) => typeof part.text === 'string')?.text ?? '';
+  return (
+    root.candidates?.[0]?.content?.parts?.find(
+      (part) => typeof part.text === 'string'
+    )?.text ?? ''
+  );
 }
 
 function parseGeminiJson(raw: string): GeminiTextJson {
@@ -78,16 +82,14 @@ function parseGeminiJson(raw: string): GeminiTextJson {
     ? trimmed.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim()
     : trimmed;
 
-  const direct = withoutFence;
-
   try {
-    return JSON.parse(direct) as GeminiTextJson;
+    return JSON.parse(withoutFence) as GeminiTextJson;
   } catch {
-    const start = direct.indexOf('{');
-    const end = direct.lastIndexOf('}');
+    const start = withoutFence.indexOf('{');
+    const end = withoutFence.lastIndexOf('}');
 
     if (start >= 0 && end > start) {
-      const candidate = direct.slice(start, end + 1);
+      const candidate = withoutFence.slice(start, end + 1);
       try {
         return JSON.parse(candidate) as GeminiTextJson;
       } catch {
@@ -99,7 +101,10 @@ function parseGeminiJson(raw: string): GeminiTextJson {
   }
 }
 
-async function callGemini(prompt: string, imageDataUrl: string): Promise<GeminiTextJson> {
+async function callGemini(
+  prompt: string,
+  imageDataUrl: string
+): Promise<GeminiTextJson> {
   const { apiKey, model } = getGeminiConfig();
 
   if (!apiKey) {
@@ -116,10 +121,7 @@ async function callGemini(prompt: string, imageDataUrl: string): Promise<GeminiT
       body: JSON.stringify({
         contents: [
           {
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mimeType, data } }
-            ]
+            parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data } }]
           }
         ],
         generationConfig: {
@@ -179,7 +181,8 @@ export async function analyzeComponentWithGemini(
   componentType: string,
   imageDataUrl: string
 ): Promise<ComponentAnalysis> {
-  if (!isKnownComponentType(componentType)) {
+  const resolvedComponentType = resolveComponentType(componentType);
+  if (!resolvedComponentType) {
     throw new Error('Okand komponenttyp.');
   }
 
@@ -187,20 +190,20 @@ export async function analyzeComponentWithGemini(
 
   if (!apiKey) {
     return {
-      componentType,
-      identifiedValue: `Manuell avlasning: ${componentType}`,
+      componentType: resolvedComponentType,
+      identifiedValue: `Manuell avlasning: ${resolvedComponentType}`,
       confidence: 0.1,
       notes: 'GEMINI_API_KEY saknas. Fyll i falt manuellt.',
       provider: 'fallback',
       requiresManualConfirmation: true,
-      suggestedAttributes: createEmptyAttributes(componentType)
+      suggestedAttributes: createEmptyAttributes(resolvedComponentType)
     };
   }
 
-  const requiredFields = Object.keys(createEmptyAttributes(componentType));
+  const requiredFields = Object.keys(createEmptyAttributes(resolvedComponentType));
 
   const prompt =
-    `Du analyserar ventilationskomponenten '${componentType}'. ` +
+    `Du analyserar ventilationskomponenten '${resolvedComponentType}'. ` +
     `Obligatoriska falt ar: ${requiredFields.join(', ')}. ` +
     'Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
     'suggestedAttributes ska vara ett objekt med nyckel/varde. Inga markdown-block.';
@@ -208,13 +211,14 @@ export async function analyzeComponentWithGemini(
   const parsed = await callGemini(prompt, imageDataUrl);
 
   const suggestedAttributes = {
-    ...createEmptyAttributes(componentType),
+    ...createEmptyAttributes(resolvedComponentType),
     ...normalizeAttributes(parsed.suggestedAttributes)
   };
 
   return {
-    componentType,
-    identifiedValue: parsed.identifiedValue?.trim() || `Okand ${componentType}`,
+    componentType: resolvedComponentType,
+    identifiedValue:
+      parsed.identifiedValue?.trim() || `Okand ${resolvedComponentType}`,
     confidence: clampConfidence(parsed.confidence),
     notes: parsed.notes?.trim() || 'Bekrafta komponentdata innan sparning.',
     provider: 'gemini',
