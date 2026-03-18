@@ -255,8 +255,23 @@ function parseGeminiJson(raw: string): GeminiTextJson {
 }
 
 function summarizeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\s+/g, ' ').trim().slice(0, 240);
+  if (error instanceof GeminiHttpError) {
+    if (error.status === 429) {
+      return 'Gemini 429: kvot/rate-limit overskriden.';
+    }
+
+    return `Gemini ${error.status}: fel vid API-anrop.`;
+  }
+
+  const message = (error instanceof Error ? error.message : String(error))
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (/quota|resource_exhausted|rate limit|429/i.test(message)) {
+    return 'Gemini 429: kvot/rate-limit overskriden.';
+  }
+
+  return message.slice(0, 180);
 }
 
 function isQuotaError(error: unknown): boolean {

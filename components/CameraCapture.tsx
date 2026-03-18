@@ -359,7 +359,7 @@ export function CameraCapture({
 
       {isSubmitting && (
         <p style={{ margin: '0.45rem 0 0', color: '#67e8f9', fontSize: '0.82rem' }}>
-          Bearbetar bild med OCR och AI...
+          Bearbetar bild med lokal OCR...
         </p>
       )}
 

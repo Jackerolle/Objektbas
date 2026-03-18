@@ -176,53 +176,23 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
   return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
 }
 
-function extractSystemPositionCandidateFromText(value: string | undefined): string {
+function extractSystemPositionCandidateFromNotes(value: string | undefined): string {
   if (!value) {
     return '';
   }
 
-  const words = value
-    .toUpperCase()
-    .replace(/[^A-Z0-9\-\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => normalizeSystemPositionId(word))
-    .filter(Boolean);
+  const matches = value.matchAll(
+    /(OCR-kandidat|Direkt-kandidat)\s*:\s*([A-Z0-9-]{4,24})/gi
+  );
 
-  let best = '';
-  let bestScore = -1;
-
-  const evaluate = (candidate: string, bonus = 0) => {
-    if (!isUsableDetectedSystemPositionId(candidate)) {
-      return;
+  for (const match of matches) {
+    const candidate = normalizeSystemPositionId(match[2]);
+    if (isUsableDetectedSystemPositionId(candidate)) {
+      return candidate;
     }
-
-    let score = bonus;
-    if (/^\d{2,6}[A-Z]{1,4}\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
-      score += 7;
-    }
-    if (/^[A-Z]{1,6}-?\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
-      score += 5;
-    }
-    if (candidate.length >= 6 && candidate.length <= 12) {
-      score += 2;
-    }
-
-    if (score > bestScore || (score === bestScore && candidate.length > best.length)) {
-      bestScore = score;
-      best = candidate;
-    }
-  };
-
-  for (const word of words) {
-    evaluate(word);
   }
 
-  for (let i = 0; i < words.length - 1; i += 1) {
-    evaluate(normalizeSystemPositionId(`${words[i]}${words[i + 1]}`), 2);
-  }
-
-  return best;
+  return '';
 }
 
 function getDefaultScopeForTask(task: CaptureTask): {
@@ -658,7 +628,7 @@ export default function HomePage() {
 
     try {
       if (task.id === 'skylt') {
-        setStatus('Bild mottagen. Laser objektskylt med OCR och AI...');
+        setStatus('Bild mottagen. Laser objektskylt med lokal OCR...');
         let analysis: SystemPositionAnalysis;
 
         try {
@@ -667,14 +637,14 @@ export default function HomePage() {
           analysis = {
             systemPositionId: 'MANUELL-KRAVS',
             confidence: 0.1,
-            notes: `AI-analys misslyckades: ${String(analysisError).slice(0, 120)}`,
+            notes: `OCR-analys misslyckades: ${String(analysisError).slice(0, 120)}`,
             provider: 'fallback',
             requiresManualConfirmation: true
           };
         }
 
         const aiId = normalizeSystemPositionId(analysis.systemPositionId);
-        const noteId = extractSystemPositionCandidateFromText(analysis.notes);
+        const noteId = extractSystemPositionCandidateFromNotes(analysis.notes);
         const manualId = normalizeSystemPositionId(systemPositionId);
         const aiIdIsUsable = isUsableDetectedSystemPositionId(aiId);
         const noteIdIsUsable = isUsableDetectedSystemPositionId(noteId);
@@ -712,6 +682,7 @@ export default function HomePage() {
         const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
         const usedManual = Boolean(manualId) && resolvedId === manualId && !highConfidenceAi;
         const usedLowConfidenceAi = resolvedId === aiId && aiIdIsUsable && !highConfidenceAi;
+        const usedNoteFallback = resolvedId === noteId && noteIdIsUsable && !highConfidenceAi;
         setStatus(
           usedManual
             ? `Objektskylt sparad med manuellt ID ${resolvedId}.${analysisNote}`
@@ -719,6 +690,8 @@ export default function HomePage() {
               ? `Objektskylt tolkad med lagre sakerhet (${toPercent(
                   analysis.confidence
                 )}) och sparad som ${resolvedId}. Bekrafta ID.${analysisNote}`
+            : usedNoteFallback
+              ? `Objektskylt sparad med OCR-kandidat ${resolvedId}. Bekrafta ID manuellt.${analysisNote}`
             : `Objektskylt tolkad (${toPercent(
                 analysis.confidence
               )}) och aggregat sparat. Fortsätt med komponentfoton.${analysisNote}`
@@ -737,7 +710,7 @@ export default function HomePage() {
       let identifiedValue = `Ej avläst (${task.label})`;
       let attributes = createEmptyAttributes(task.componentType);
       let note = 'Automatiskt registrerad utan säker AI-tolkning.';
-      setStatus(`Bild mottagen. Laser ${task.label.toLowerCase()} med OCR och AI...`);
+      setStatus(`Bild mottagen. Laser ${task.label.toLowerCase()} med lokal OCR...`);
 
       try {
         const analysis = await analyzeComponentImage(task.componentType, imageDataUrl);
