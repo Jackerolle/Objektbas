@@ -18,6 +18,8 @@ create table if not exists public.ventilation_components (
   aggregate_id uuid not null references public.ventilation_aggregates(id) on delete cascade,
   component_type text not null,
   identified_value text not null,
+  assembly text null,
+  sub_component text null,
   notes text null,
   attributes jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
@@ -47,8 +49,8 @@ create index if not exists idx_vent_components_aggregate_created_at
 create index if not exists idx_vent_components_type
   on public.ventilation_components(component_type);
 
-create unique index if not exists idx_vent_components_unique_per_type
-  on public.ventilation_components(aggregate_id, component_type);
+create index if not exists idx_vent_components_type_scope
+  on public.ventilation_components(aggregate_id, component_type, assembly, sub_component);
 
 create index if not exists idx_vent_components_attributes_gin
   on public.ventilation_components using gin (attributes);

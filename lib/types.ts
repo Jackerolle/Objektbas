@@ -67,6 +67,8 @@ export type CreateAggregateComponentPayload = {
   componentType: string;
   identifiedValue: string;
   notes?: string;
+  assembly?: string;
+  subComponent?: string;
   attributes?: Record<string, string>;
 };
 
@@ -75,6 +77,8 @@ export type AggregateComponent = {
   componentType: string;
   identifiedValue: string;
   notes?: string;
+  assembly?: string;
+  subComponent?: string;
   attributes: Record<string, string>;
   createdAt: string;
 };

@@ -21,6 +21,8 @@ type ComponentRow = {
   component_type: string;
   identified_value: string;
   notes: string | null;
+  assembly: string | null;
+  sub_component: string | null;
   attributes: Record<string, unknown> | null;
   created_at: string;
 };
@@ -52,6 +54,8 @@ function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): Aggrega
       componentType: component.component_type,
       identifiedValue: component.identified_value,
       notes: component.notes ?? undefined,
+      assembly: component.assembly ?? undefined,
+      subComponent: component.sub_component ?? undefined,
       attributes: toAttributes(component.attributes),
       createdAt: component.created_at
     }))
@@ -124,7 +128,13 @@ export async function listAggregates(query: string): Promise<AggregateRecord[]> 
     }
 
     return record.components.some((component) => {
-      const fields = [component.componentType, component.identifiedValue, component.notes];
+      const fields = [
+        component.componentType,
+        component.assembly,
+        component.subComponent,
+        component.identifiedValue,
+        component.notes
+      ];
       const componentMatch = fields
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
@@ -245,41 +255,19 @@ export async function addComponentToAggregate(
     return null;
   }
 
-  const { data: existingComponent, error: existingComponentError } = await supabase
+  const { error: insertError } = await supabase
     .from('ventilation_components')
-    .select('id')
-    .eq('aggregate_id', aggregateId)
-    .eq('component_type', payload.componentType)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .insert({
+      aggregate_id: aggregateId,
+      component_type: payload.componentType,
+      identified_value: payload.identifiedValue,
+      notes: payload.notes ?? null,
+      assembly: payload.assembly?.trim() || null,
+      sub_component: payload.subComponent?.trim() || null,
+      attributes: payload.attributes ?? {}
+    });
 
-  assertNoError(existingComponentError);
-
-  if (existingComponent?.id) {
-    const { error: updateComponentError } = await supabase
-      .from('ventilation_components')
-      .update({
-        identified_value: payload.identifiedValue,
-        notes: payload.notes ?? null,
-        attributes: payload.attributes ?? {}
-      })
-      .eq('id', existingComponent.id);
-
-    assertNoError(updateComponentError);
-  } else {
-    const { error: insertError } = await supabase
-      .from('ventilation_components')
-      .insert({
-        aggregate_id: aggregateId,
-        component_type: payload.componentType,
-        identified_value: payload.identifiedValue,
-        notes: payload.notes ?? null,
-        attributes: payload.attributes ?? {}
-      });
-
-    assertNoError(insertError);
-  }
+  assertNoError(insertError);
 
   const { error: updateError } = await supabase
     .from('ventilation_aggregates')

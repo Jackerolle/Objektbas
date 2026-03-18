@@ -60,6 +60,8 @@ export async function POST(request: Request, context: RouteContext) {
       ...payload,
       componentType: payload.componentType,
       identifiedValue: payload.identifiedValue.trim(),
+      assembly: payload.assembly?.trim() || undefined,
+      subComponent: payload.subComponent?.trim() || undefined,
       attributes: normalizedAttributes
     });
 

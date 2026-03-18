@@ -36,6 +36,17 @@ type CaptureTask = {
 };
 
 type SortOrder = 'nyast' | 'aldst';
+type StartMethod = 'foto' | 'manuell';
+
+const ASSEMBLY_OPTIONS = ['Motor', 'Fläkt', 'Aggregat', 'Övrigt'] as const;
+type AssemblyOption = (typeof ASSEMBLY_OPTIONS)[number];
+
+const SUB_COMPONENT_PRESETS: Record<AssemblyOption, string[]> = {
+  Motor: ['Motorskylt', 'Remskiva', 'Bussning', 'Lager', 'Axeldiameter', 'Kilrem'],
+  Fläkt: ['Fläkthjul', 'Remskiva', 'Lager', 'Axeldiameter', 'Bussning', 'Kilrem'],
+  Aggregat: ['Filter', 'Objektskylt', 'Spjäll', 'Värmebatteri'],
+  Övrigt: []
+};
 
 const DEPARTMENT_PRESETS = [
   'Produktion',
@@ -144,8 +155,54 @@ function normalizeSystemPositionId(value: string | undefined): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function getDefaultScopeForTask(task: CaptureTask): {
+  assembly: AssemblyOption;
+  subComponent: string;
+} {
+  switch (task.id) {
+    case 'motor':
+      return { assembly: 'Motor', subComponent: 'Motorskylt' };
+    case 'flakt':
+      return { assembly: 'Fläkt', subComponent: 'Fläkthjul' };
+    case 'remskiva':
+      return { assembly: 'Motor', subComponent: 'Remskiva' };
+    case 'lager':
+      return { assembly: 'Motor', subComponent: 'Lager' };
+    case 'kilrem':
+      return { assembly: 'Motor', subComponent: 'Kilrem' };
+    case 'filter':
+      return { assembly: 'Aggregat', subComponent: 'Filter' };
+    default:
+      return { assembly: 'Aggregat', subComponent: task.label };
+  }
+}
+
+function getDefaultScopeForComponentType(componentType: ComponentType): {
+  assembly: AssemblyOption;
+  subComponent: string;
+} {
+  switch (componentType) {
+    case 'Motor':
+      return { assembly: 'Motor', subComponent: 'Motorskylt' };
+    case 'Fläkt':
+      return { assembly: 'Fläkt', subComponent: 'Fläkthjul' };
+    case 'Remskiva':
+      return { assembly: 'Motor', subComponent: 'Remskiva' };
+    case 'Lager':
+      return { assembly: 'Motor', subComponent: 'Lager' };
+    case 'Kilrem':
+      return { assembly: 'Motor', subComponent: 'Kilrem' };
+    case 'Filter':
+      return { assembly: 'Aggregat', subComponent: 'Filter' };
+    default:
+      return { assembly: 'Övrigt', subComponent: componentType };
+  }
+}
+
 export default function HomePage() {
   const [mode, setMode] = useState<AppMode>('lagg-till');
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [startMethod, setStartMethod] = useState<StartMethod | null>(null);
 
   const [selectedTaskId, setSelectedTaskId] = useState<string>('skylt');
   const [capturedPhotos, setCapturedPhotos] = useState<Record<string, string>>({});
@@ -158,7 +215,12 @@ export default function HomePage() {
   const [currentAggregate, setCurrentAggregate] = useState<AggregateRecord | null>(null);
   const [isSavingAggregate, setIsSavingAggregate] = useState(false);
 
+  const [captureAssembly, setCaptureAssembly] = useState<AssemblyOption>('Motor');
+  const [captureSubComponent, setCaptureSubComponent] = useState('Motorskylt');
+
   const [manualComponentType, setManualComponentType] = useState<ComponentType>('Kilrem');
+  const [manualAssembly, setManualAssembly] = useState<AssemblyOption>('Motor');
+  const [manualSubComponent, setManualSubComponent] = useState('Kilrem');
   const [manualValue, setManualValue] = useState('');
   const [manualAttributes, setManualAttributes] = useState<Record<string, string>>(
     () => createEmptyAttributes('Kilrem')
@@ -186,14 +248,14 @@ export default function HomePage() {
   const taskStatuses = useMemo(() => {
     return CAPTURE_TASKS.map((task) => {
       const captured = Boolean(capturedPhotos[task.id]);
-      const saved =
-        !!task.componentType &&
-        !!currentAggregate?.components.some(
-          (component) => component.componentType === task.componentType
-        );
+      const savedCount = task.componentType
+        ? (currentAggregate?.components.filter(
+            (component) => component.componentType === task.componentType
+          ).length ?? 0)
+        : 0;
       const locked = !aggregateReady && task.id !== 'skylt';
 
-      return { ...task, captured, saved, locked };
+      return { ...task, captured, savedCount, locked };
     });
   }, [capturedPhotos, currentAggregate, aggregateReady]);
 
@@ -218,9 +280,62 @@ export default function HomePage() {
     });
   }, [departmentFilter, searchResults, sortOrder]);
 
+  const captureSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[captureAssembly] ?? [],
+    [captureAssembly]
+  );
+
+  const manualSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[manualAssembly] ?? [],
+    [manualAssembly]
+  );
+
   const clearFeedback = () => {
     setError(null);
     setStatus('');
+  };
+
+  useEffect(() => {
+    const defaults = getDefaultScopeForTask(findTask(selectedTaskId));
+    setCaptureAssembly(defaults.assembly);
+    setCaptureSubComponent(defaults.subComponent);
+  }, [selectedTaskId]);
+
+  const resetAggregateDraft = () => {
+    setSelectedTaskId('skylt');
+    setCapturedPhotos({});
+    setCurrentAggregate(null);
+    setSystemPositionId('');
+    setDepartment('');
+    setPosition('');
+    setAggregateNotes('');
+    const captureDefaults = getDefaultScopeForTask(findTask('skylt'));
+    setCaptureAssembly(captureDefaults.assembly);
+    setCaptureSubComponent(captureDefaults.subComponent);
+    const manualDefaults = getDefaultScopeForComponentType('Kilrem');
+    setManualAssembly(manualDefaults.assembly);
+    setManualSubComponent(manualDefaults.subComponent);
+    setManualComponentType('Kilrem');
+    setManualValue('');
+    setManualAttributes(createEmptyAttributes('Kilrem'));
+    setManualNotes('');
+  };
+
+  const openAddAggregateModal = () => {
+    clearFeedback();
+    setMode('lagg-till');
+    setIsAddModalOpen(true);
+  };
+
+  const chooseStartMethod = (method: StartMethod) => {
+    resetAggregateDraft();
+    setStartMethod(method);
+    setIsAddModalOpen(false);
+    setStatus(
+      method === 'foto'
+        ? 'Startläge: fota objektskylt.'
+        : 'Startläge: lägg in manuellt (fyll i systemposition och skapa aggregat).'
+    );
   };
 
   const buildAggregatePayload = (systemId: string) => ({
@@ -392,6 +507,8 @@ export default function HomePage() {
         componentType: task.componentType,
         identifiedValue,
         notes: note,
+        assembly: captureAssembly,
+        subComponent: captureSubComponent.trim() || task.label,
         attributes
       });
 
@@ -400,7 +517,10 @@ export default function HomePage() {
       setCurrentAggregate(updated);
       void persistLocalPhoto(currentAggregate.id, task.id, imageDataUrl);
       setSelectedTaskId(getNextTaskId(task.id, nextCaptured));
-      setStatus(`${task.label} sparad i aggregatet.`);
+      const scopeText = [captureAssembly, captureSubComponent.trim()]
+        .filter(Boolean)
+        .join(' / ');
+      setStatus(`${task.label} sparad i aggregatet${scopeText ? ` (${scopeText})` : ''}.`);
     } catch (captureError) {
       setError(`Kunde inte slutföra ${task.label.toLowerCase()}: ${String(captureError)}`);
     } finally {
@@ -474,6 +594,8 @@ export default function HomePage() {
 
   const handleOpenAggregateForEditing = (aggregate: AggregateRecord) => {
     setCurrentAggregate(aggregate);
+    setStartMethod('foto');
+    setIsAddModalOpen(false);
     setSystemPositionId(aggregate.systemPositionId);
     setDepartment(aggregate.department ?? '');
     setPosition(aggregate.position ?? '');
@@ -485,7 +607,10 @@ export default function HomePage() {
   };
 
   const handleManualTypeChange = (nextType: ComponentType) => {
+    const defaults = getDefaultScopeForComponentType(nextType);
     setManualComponentType(nextType);
+    setManualAssembly(defaults.assembly);
+    setManualSubComponent(defaults.subComponent);
     setManualValue('');
     setManualAttributes(createEmptyAttributes(nextType));
     setManualNotes('');
@@ -504,6 +629,16 @@ export default function HomePage() {
       return;
     }
 
+    if (!manualAssembly.trim()) {
+      setError('Huvudkategori krävs för manuell registrering.');
+      return;
+    }
+
+    if (!manualSubComponent.trim()) {
+      setError('Underkategori krävs för manuell registrering.');
+      return;
+    }
+
     const missing = COMPONENT_FIELD_CONFIG[manualComponentType]
       .filter((field) => !manualAttributes[field.key]?.trim())
       .map((field) => field.label);
@@ -519,6 +654,8 @@ export default function HomePage() {
       const updated = await addAggregateComponent(currentAggregate.id, {
         componentType: manualComponentType,
         identifiedValue: manualValue.trim(),
+        assembly: manualAssembly,
+        subComponent: manualSubComponent.trim(),
         attributes: manualAttributes,
         notes: manualNotes.trim() || 'Manuellt registrerad post.'
       });
@@ -527,7 +664,9 @@ export default function HomePage() {
       setManualValue('');
       setManualAttributes(createEmptyAttributes(manualComponentType));
       setManualNotes('');
-      setStatus(`${manualComponentType} sparad manuellt i biblioteket.`);
+      setStatus(
+        `${manualComponentType} sparad manuellt (${manualAssembly} / ${manualSubComponent.trim()}) i biblioteket.`
+      );
     } catch (manualError) {
       setError(`Kunde inte spara manuell post: ${String(manualError)}`);
     } finally {
@@ -537,6 +676,9 @@ export default function HomePage() {
 
   const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
   const selectedPhotoIsPreviewable = Boolean(selectedPhoto?.startsWith('data:image/'));
+  const showAddWorkspace = Boolean(startMethod) || Boolean(currentAggregate);
+  const showManualSkyltStart =
+    selectedTask.id === 'skylt' && startMethod === 'manuell' && !aggregateReady;
 
   return (
     <main className={styles.pageRoot}>
@@ -550,7 +692,7 @@ export default function HomePage() {
 
         <div className={styles.modeSwitch}>
           <button
-            onClick={() => setMode('lagg-till')}
+            onClick={openAddAggregateModal}
             className={`${styles.modeButton} ${
               mode === 'lagg-till' ? styles.modeButtonActive : ''
             }`}
@@ -574,8 +716,32 @@ export default function HomePage() {
       {error && <p className={styles.errorBanner}>{error}</p>}
       {status && <p className={styles.statusBanner}>{status}</p>}
 
+      {isAddModalOpen && (
+        <div className={styles.modalBackdrop} onClick={() => setIsAddModalOpen(false)}>
+          <section
+            className={styles.choiceModal}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Hur vill du starta aggregatet?</h2>
+            <p>Välj ett alternativ.</p>
+            <div className={styles.choiceButtons}>
+              <button onClick={() => chooseStartMethod('foto')}>Fota</button>
+              <button onClick={() => chooseStartMethod('manuell')}>Lägg in manuellt</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {mode === 'lagg-till' ? (
-        <section className={styles.addLayout}>
+        !showAddWorkspace ? (
+          <section className={styles.searchCard}>
+            <p className={styles.emptyState}>
+              Klicka på <strong>Lägg till aggregat</strong> och välj <strong>Fota</strong> eller{' '}
+              <strong>Lägg in manuellt</strong>.
+            </p>
+          </section>
+        ) : (
+          <section className={styles.addLayout}>
           <aside className={styles.card}>
             <div className={styles.cardHeader}>
               <h2>Fotopunkter</h2>
@@ -604,8 +770,8 @@ export default function HomePage() {
                     </div>
                     <div className={styles.taskMeta}>
                       {task.required && <span className={styles.required}>Obligatorisk</span>}
-                      {task.saved ? (
-                        <span className={styles.saved}>Sparad</span>
+                      {task.savedCount ? (
+                        <span className={styles.saved}>{task.savedCount} sparade</span>
                       ) : task.captured ? (
                         <span className={styles.captured}>Fotad</span>
                       ) : (
@@ -618,31 +784,50 @@ export default function HomePage() {
             </ul>
           </aside>
 
-          <section className={styles.workspace}>
+            <section className={styles.workspace}>
             <article className={styles.card}>
               <div className={styles.cardHeader}>
                 <h2>Aktivt moment: {selectedTask.label}</h2>
                 {isProcessingCapture && <span className={styles.badge}>Bearbetar...</span>}
               </div>
 
-              <CameraCapture
-                onCapture={handleCapture}
-                title={`Fotografera ${selectedTask.label.toLowerCase()}`}
-                subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
-                captureLabel='Ta foto med enhet'
-                uploadLabel='Ladda upp foto'
-                helperText={
-                  selectedTask.id === 'skylt'
-                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat. Bilden sparas lokalt på enheten.'
-                    : 'Sparas i befintligt aggregat. Samma komponenttyp uppdateras istället för att dubblas. Bilden sparas lokalt på enheten.'
-                }
-                disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
-              />
+              {selectedTask.id !== 'skylt' && (
+                <div className={styles.scopeGrid}>
+                  <label>
+                    Huvudkategori
+                    <select
+                      value={captureAssembly}
+                      onChange={(event) => setCaptureAssembly(event.target.value as AssemblyOption)}
+                    >
+                      {ASSEMBLY_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              {selectedTask.id === 'skylt' && !aggregateReady && (
+                  <label>
+                    Underkategori
+                    <input
+                      value={captureSubComponent}
+                      onChange={(event) => setCaptureSubComponent(event.target.value)}
+                      list='capture-subcomponent-presets'
+                      placeholder='Exempel: Remskiva motorsida'
+                    />
+                    <datalist id='capture-subcomponent-presets'>
+                      {captureSubComponentSuggestions.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  </label>
+                </div>
+              )}
+
+              {showManualSkyltStart ? (
                 <div className={styles.libraryHint}>
-                  <strong>Ingen bild just nu?</strong>
-                  <p>Skapa aggregat manuellt nu och lägg till foto senare.</p>
+                  <strong>Manuell start</strong>
+                  <p>Fyll i Systemposition i aggregatramen och skapa aggregatet manuellt.</p>
                   <button
                     className={styles.manualSaveButton}
                     onClick={() => void handleCreateAggregateManually()}
@@ -651,6 +836,20 @@ export default function HomePage() {
                     {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
                   </button>
                 </div>
+              ) : (
+                <CameraCapture
+                  onCapture={handleCapture}
+                  title={`Fotografera ${selectedTask.label.toLowerCase()}`}
+                  subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
+                  captureLabel='Ta foto med enhet'
+                  uploadLabel='Ladda upp foto'
+                helperText={
+                  selectedTask.id === 'skylt'
+                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat. Bilden sparas lokalt på enheten.'
+                    : 'Sparas i befintligt aggregat med vald huvudkategori/underkategori. Flera komponenter av samma typ stöds. Bilden sparas lokalt på enheten.'
+                }
+                  disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
+                />
               )}
 
               {selectedPhoto && selectedPhotoIsPreviewable && (
@@ -758,6 +957,35 @@ export default function HomePage() {
                 </label>
 
                 <label>
+                  Huvudkategori
+                  <select
+                    value={manualAssembly}
+                    onChange={(event) => setManualAssembly(event.target.value as AssemblyOption)}
+                  >
+                    {ASSEMBLY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  Underkategori
+                  <input
+                    value={manualSubComponent}
+                    onChange={(event) => setManualSubComponent(event.target.value)}
+                    list='manual-subcomponent-presets'
+                    placeholder='Exempel: Remskiva fläktsida'
+                  />
+                  <datalist id='manual-subcomponent-presets'>
+                    {manualSubComponentSuggestions.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </label>
+
+                <label>
                   Identifierat värde
                   <input
                     value={manualValue}
@@ -814,7 +1042,9 @@ export default function HomePage() {
                   {currentAggregate.components.map((component) => (
                     <li key={component.id}>
                       <p>
-                        <strong>{component.componentType}</strong>: {component.identifiedValue}
+                        <strong>{component.componentType}</strong>
+                        {component.assembly ? ` · ${component.assembly}` : ''}
+                        {component.subComponent ? ` / ${component.subComponent}` : ''}: {component.identifiedValue}
                       </p>
                       <p>
                         {Object.entries(component.attributes)
@@ -831,8 +1061,9 @@ export default function HomePage() {
                 </p>
               )}
             </article>
+            </section>
           </section>
-        </section>
+        )
       ) : (
         <section className={styles.searchCard}>
           <div className={styles.searchControls}>
@@ -886,12 +1117,22 @@ export default function HomePage() {
                 </p>
 
                 {!!aggregate.components.length && (
-                  <div className={styles.tags}>
-                    {aggregate.components.map((component) => (
-                      <span key={component.id}>
-                        {component.componentType}: {component.identifiedValue}
-                      </span>
-                    ))}
+                  <div className={styles.componentOverview}>
+                    <p className={styles.componentOverviewTitle}>
+                      Komponentöversikt ({aggregate.components.length})
+                    </p>
+                    <ul className={styles.componentOverviewList}>
+                      {aggregate.components.map((component) => (
+                        <li key={component.id}>
+                          <strong>{component.componentType}</strong>
+                          <span>
+                            {component.assembly ? `${component.assembly}` : 'Ingen huvudkategori'}
+                            {component.subComponent ? ` / ${component.subComponent}` : ''}
+                          </span>
+                          <span>{component.identifiedValue}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
 

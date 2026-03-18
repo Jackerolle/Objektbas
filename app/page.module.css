@@ -94,6 +94,51 @@
   border-color: rgba(96, 165, 250, 0.48);
 }
 
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.choiceModal {
+  width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1rem;
+  background: linear-gradient(170deg, rgba(21, 30, 39, 0.96), rgba(12, 18, 24, 0.98));
+}
+
+.choiceModal h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.choiceModal p {
+  margin: 0.35rem 0 0.8rem;
+  color: var(--muted);
+}
+
+.choiceButtons {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.choiceButtons button {
+  border: 0;
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  color: #081019;
+  font-weight: 700;
+  cursor: pointer;
+  background: linear-gradient(120deg, #fb923c, #22d3ee);
+}
+
 .addLayout {
   display: grid;
   gap: 1rem;
@@ -270,6 +315,31 @@
   width: 100%;
   border-radius: 0.65rem;
   border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.scopeGrid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0.75rem;
+}
+
+.scopeGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+  color: #dbe5ef;
+}
+
+.scopeGrid input,
+.scopeGrid select {
+  border-radius: 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  background: rgba(2, 6, 23, 0.85);
+  color: #f8fafc;
+  padding: 0.65rem;
+  font-size: 0.94rem;
 }
 
 .quickForm {
@@ -503,6 +573,43 @@
   border: 1px solid rgba(20, 184, 166, 0.3);
 }
 
+.componentOverview {
+  margin-top: 0.6rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 0.75rem;
+  padding: 0.55rem;
+  background: rgba(2, 6, 23, 0.65);
+}
+
+.componentOverviewTitle {
+  margin: 0 0 0.45rem;
+  color: #dbeafe;
+  font-size: 0.82rem;
+}
+
+.componentOverviewList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.componentOverviewList li {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.65rem;
+  padding: 0.45rem;
+  background: rgba(15, 23, 42, 0.56);
+}
+
+.componentOverviewList li span {
+  font-size: 0.8rem;
+  color: #c4d2df;
+}
+
 .openButton {
   margin-top: 0.6rem;
   border: 1px solid rgba(96, 165, 250, 0.45);
@@ -544,11 +651,19 @@
     grid-template-columns: 1fr;
   }
 
+  .scopeGrid {
+    grid-template-columns: 1fr;
+  }
+
   .manualGrid {
     grid-template-columns: 1fr;
   }
 
   .libraryToolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .choiceButtons {
     grid-template-columns: 1fr;
   }
 
