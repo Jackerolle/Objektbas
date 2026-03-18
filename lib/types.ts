@@ -61,14 +61,12 @@ export type CreateAggregatePayload = {
   position?: string;
   department?: string;
   notes?: string;
-  systemPositionImageDataUrl?: string;
 };
 
 export type CreateAggregateComponentPayload = {
   componentType: string;
   identifiedValue: string;
   notes?: string;
-  imageDataUrl?: string;
   attributes?: Record<string, string>;
 };
 
@@ -77,7 +75,6 @@ export type AggregateComponent = {
   componentType: string;
   identifiedValue: string;
   notes?: string;
-  imageDataUrl?: string;
   attributes: Record<string, string>;
   createdAt: string;
 };
@@ -88,7 +85,6 @@ export type AggregateRecord = {
   position?: string;
   department?: string;
   notes?: string;
-  systemPositionImageDataUrl?: string;
   createdAt: string;
   updatedAt: string;
   components: AggregateComponent[];

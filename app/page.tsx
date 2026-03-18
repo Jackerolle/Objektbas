@@ -15,12 +15,16 @@ import {
   createEmptyAttributes
 } from '@/lib/componentSchema';
 import {
+  loadAggregateLocalPhotos,
+  saveAggregateLocalPhoto
+} from '@/lib/localPhotoStore';
+import {
   AggregateRecord,
   AppMode,
   ComponentType,
   SystemPositionAnalysis
 } from '@/lib/types';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import styles from './page.module.css';
 
 type CaptureTask = {
@@ -219,12 +223,11 @@ export default function HomePage() {
     setStatus('');
   };
 
-  const buildAggregatePayload = (systemId: string, imageDataUrl?: string) => ({
+  const buildAggregatePayload = (systemId: string) => ({
     systemPositionId: normalizeSystemPositionId(systemId),
     position: position.trim() || undefined,
     department: department.trim() || undefined,
-    notes: aggregateNotes.trim() || undefined,
-    systemPositionImageDataUrl: imageDataUrl
+    notes: aggregateNotes.trim() || undefined
   });
 
   const handleTaskSelection = (taskId: string) => {
@@ -237,10 +240,7 @@ export default function HomePage() {
     setSelectedTaskId(taskId);
   };
 
-  const ensureAggregate = async (
-    objectPhotoDataUrl: string,
-    forcedSystemPositionId?: string
-  ): Promise<AggregateRecord> => {
+  const ensureAggregate = async (forcedSystemPositionId?: string): Promise<AggregateRecord> => {
     if (currentAggregate) {
       return currentAggregate;
     }
@@ -250,14 +250,47 @@ export default function HomePage() {
       throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
     }
 
-    const created = await createAggregate(
-      buildAggregatePayload(candidateId, objectPhotoDataUrl)
-    );
+    const created = await createAggregate(buildAggregatePayload(candidateId));
 
     setCurrentAggregate(created);
     setSystemPositionId(created.systemPositionId);
     return created;
   };
+
+  const persistLocalPhoto = async (
+    aggregateId: string,
+    taskId: string,
+    imageDataUrl: string
+  ) => {
+    try {
+      await saveAggregateLocalPhoto(aggregateId, taskId, imageDataUrl);
+    } catch (localError) {
+      console.warn('Kunde inte spara lokal bild för aggregat', localError);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentAggregate?.id) {
+      return;
+    }
+
+    let cancelled = false;
+    void loadAggregateLocalPhotos(currentAggregate.id)
+      .then((photos) => {
+        if (cancelled || !photos || !Object.keys(photos).length) {
+          return;
+        }
+
+        setCapturedPhotos((current) => ({ ...photos, ...current }));
+      })
+      .catch((localError) => {
+        console.warn('Kunde inte läsa lokala bilder för aggregat', localError);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAggregate?.id]);
 
   const handleSearch = async (queryOverride?: string) => {
     clearFeedback();
@@ -312,13 +345,14 @@ export default function HomePage() {
         const aggregate = currentAggregate
           ? await updateAggregate(
               currentAggregate.id,
-              buildAggregatePayload(resolvedId, imageDataUrl)
+              buildAggregatePayload(resolvedId)
             )
-          : await ensureAggregate(imageDataUrl, resolvedId);
+          : await ensureAggregate(resolvedId);
 
         setCurrentAggregate(aggregate);
         const nextCaptured = { ...capturedPhotos, skylt: imageDataUrl };
         setCapturedPhotos(nextCaptured);
+        void persistLocalPhoto(aggregate.id, 'skylt', imageDataUrl);
         setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
 
         const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
@@ -357,7 +391,6 @@ export default function HomePage() {
       const updated = await addAggregateComponent(currentAggregate.id, {
         componentType: task.componentType,
         identifiedValue,
-        imageDataUrl,
         notes: note,
         attributes
       });
@@ -365,6 +398,7 @@ export default function HomePage() {
       const nextCaptured = { ...capturedPhotos, [task.id]: imageDataUrl };
       setCapturedPhotos(nextCaptured);
       setCurrentAggregate(updated);
+      void persistLocalPhoto(currentAggregate.id, task.id, imageDataUrl);
       setSelectedTaskId(getNextTaskId(task.id, nextCaptured));
       setStatus(`${task.label} sparad i aggregatet.`);
     } catch (captureError) {
@@ -392,10 +426,7 @@ export default function HomePage() {
     try {
       const updated = await updateAggregate(
         currentAggregate.id,
-        buildAggregatePayload(
-          normalizeSystemPositionId(systemPositionId),
-          currentAggregate.systemPositionImageDataUrl
-        )
+        buildAggregatePayload(normalizeSystemPositionId(systemPositionId))
       );
 
       setCurrentAggregate(updated);
@@ -413,12 +444,7 @@ export default function HomePage() {
     setDepartment(aggregate.department ?? '');
     setPosition(aggregate.position ?? '');
     setAggregateNotes(aggregate.notes ?? '');
-    setCapturedPhotos((current) => ({
-      ...current,
-      ...(aggregate.systemPositionImageDataUrl
-        ? { skylt: aggregate.systemPositionImageDataUrl }
-        : {})
-    }));
+    setCapturedPhotos({});
     setSelectedTaskId('kilrem');
     setMode('lagg-till');
     setStatus(`Öppnade aggregat ${aggregate.systemPositionId} för redigering.`);
@@ -572,8 +598,8 @@ export default function HomePage() {
                 uploadLabel='Ladda upp foto'
                 helperText={
                   selectedTask.id === 'skylt'
-                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat.'
-                    : 'Sparas i befintligt aggregat. Samma komponenttyp uppdateras istället för att dubblas.'
+                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat. Bilden sparas lokalt på enheten.'
+                    : 'Sparas i befintligt aggregat. Samma komponenttyp uppdateras istället för att dubblas. Bilden sparas lokalt på enheten.'
                 }
                 disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
               />

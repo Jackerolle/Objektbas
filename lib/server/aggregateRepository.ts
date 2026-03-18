@@ -11,7 +11,6 @@ type AggregateRow = {
   position: string | null;
   department: string | null;
   notes: string | null;
-  system_position_image_data_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -22,7 +21,6 @@ type ComponentRow = {
   component_type: string;
   identified_value: string;
   notes: string | null;
-  image_data_url: string | null;
   attributes: Record<string, unknown> | null;
   created_at: string;
 };
@@ -47,7 +45,6 @@ function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): Aggrega
     position: row.position ?? undefined,
     department: row.department ?? undefined,
     notes: row.notes ?? undefined,
-    systemPositionImageDataUrl: row.system_position_image_data_url ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     components: componentRows.map((component) => ({
@@ -55,7 +52,6 @@ function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): Aggrega
       componentType: component.component_type,
       identifiedValue: component.identified_value,
       notes: component.notes ?? undefined,
-      imageDataUrl: component.image_data_url ?? undefined,
       attributes: toAttributes(component.attributes),
       createdAt: component.created_at
     }))
@@ -198,8 +194,7 @@ export async function createAggregateRecord(
       system_position_id: normalizedSystemPositionId,
       position: payload.position ?? null,
       department: payload.department ?? null,
-      notes: payload.notes ?? null,
-      system_position_image_data_url: payload.systemPositionImageDataUrl ?? null
+      notes: payload.notes ?? null
     })
     .select('*')
     .single();
@@ -223,7 +218,6 @@ export async function updateAggregateRecord(
       position: payload.position ?? null,
       department: payload.department ?? null,
       notes: payload.notes ?? null,
-      system_position_image_data_url: payload.systemPositionImageDataUrl ?? null,
       updated_at: new Date().toISOString()
     })
     .eq('id', aggregateId)
@@ -268,7 +262,6 @@ export async function addComponentToAggregate(
       .update({
         identified_value: payload.identifiedValue,
         notes: payload.notes ?? null,
-        image_data_url: payload.imageDataUrl ?? null,
         attributes: payload.attributes ?? {}
       })
       .eq('id', existingComponent.id);
@@ -282,7 +275,6 @@ export async function addComponentToAggregate(
         component_type: payload.componentType,
         identified_value: payload.identifiedValue,
         notes: payload.notes ?? null,
-        image_data_url: payload.imageDataUrl ?? null,
         attributes: payload.attributes ?? {}
       });
 
