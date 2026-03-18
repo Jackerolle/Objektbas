@@ -14,6 +14,7 @@ import {
 } from '@/lib/api';
 import {
   COMPONENT_FIELD_CONFIG,
+  type ComponentFieldConfig,
   createEmptyAttributes,
   getMissingRequiredFields,
   isKnownComponentType
@@ -46,8 +47,8 @@ const ASSEMBLY_OPTIONS = ['Aggregat', 'Motor', 'Fl\u00e4kt', '\u00d6vrigt'] as c
 type AssemblyOption = (typeof ASSEMBLY_OPTIONS)[number];
 
 const SUB_COMPONENT_PRESETS: Record<AssemblyOption, string[]> = {
-  Motor: ['Motorskylt', 'Remskiva', 'Bussning', 'Axeldiameter', 'Lager'],
-  Fl\u00e4kt: ['Remskiva', 'Bussning', 'Axeldiameter', 'Lager'],
+  Motor: ['Motorskylt', 'Remskiva', 'Bussning', 'Lager'],
+  Fl\u00e4kt: ['Remskiva', 'Bussning', 'Lager'],
   Aggregat: ['Kilrem', 'Filter', 'Kolfilter'],
   \u00d6vrigt: ['Notering']
 };
@@ -83,19 +84,19 @@ const CAPTURE_TASKS: CaptureTask[] = [
   {
     id: 'remskiva',
     label: 'Remskiva',
-    description: 'Driv- och medremskiva med spår.',
+    description: 'Remskiva namn.',
     componentType: 'Remskiva'
   },
   {
     id: 'lager',
     label: 'Lager',
-    description: 'Lagertyp, placering och antal.',
+    description: 'Lager fram och bak.',
     componentType: 'Lager'
   },
   {
     id: 'motor',
     label: 'Motor',
-    description: 'Motormodell, effekt och märkström.',
+    description: 'Motormodell, effekt och volt.',
     componentType: 'Motor'
   },
   {
@@ -310,10 +311,10 @@ function splitManualLines(value: string): string[] {
 
 function buildIdentifiedValue(
   componentType: ComponentType,
-  identifiedValue: string,
+  identifiedValueFallback: string,
   attributes: Record<string, string>
 ): string {
-  const direct = identifiedValue.trim();
+  const direct = identifiedValueFallback.trim();
   if (direct) {
     return direct;
   }
@@ -350,7 +351,47 @@ function buildIdentifiedValue(
     return attributes.filterNamn?.trim() || '';
   }
 
+  if (componentType === 'Kilrem') {
+    const profil = attributes.profil?.trim();
+    const langd = attributes.langd?.trim();
+    const antal = attributes.antal?.trim();
+    return [profil, langd, antal ? `antal ${antal}` : '']
+      .filter(Boolean)
+      .join(' ');
+  }
+
   return '';
+}
+
+function getScopedFieldConfig(
+  componentType: ComponentType,
+  assembly: AssemblyOption
+): ComponentFieldConfig[] {
+  const baseConfig = COMPONENT_FIELD_CONFIG[componentType];
+
+  if (componentType === 'Lager' && normalizeScopeToken(assembly) === 'flakt') {
+    const singleField = baseConfig.find((field) => field.key === 'lagerFram');
+    if (singleField) {
+      return [{ ...singleField, label: 'Lager' }];
+    }
+  }
+
+  return baseConfig;
+}
+
+function sanitizeAttributesForScope(
+  componentType: ComponentType,
+  assembly: AssemblyOption,
+  attributes: Record<string, string>
+): Record<string, string> {
+  if (componentType === 'Lager' && normalizeScopeToken(assembly) === 'flakt') {
+    return {
+      ...attributes,
+      lagerBak: ''
+    };
+  }
+
+  return attributes;
 }
 
 function isMultiEntryComponentType(componentType: ComponentType): boolean {
@@ -467,6 +508,14 @@ export default function HomePage() {
     [editingAssembly]
   );
   const manualAllowsMultiple = isMultiEntryComponentType(manualComponentType);
+  const manualFieldConfig = useMemo(
+    () => getScopedFieldConfig(manualComponentType, manualAssembly),
+    [manualAssembly, manualComponentType]
+  );
+  const editingFieldConfig = useMemo(
+    () => getScopedFieldConfig(editingComponentType, editingAssembly),
+    [editingAssembly, editingComponentType]
+  );
 
   const clearFeedback = () => {
     setError(null);
@@ -873,11 +922,16 @@ export default function HomePage() {
       manualAssembly,
       manualSubComponent.trim()
     );
+    const scopedAttributes = sanitizeAttributesForScope(
+      resolvedType,
+      manualAssembly,
+      manualAttributes
+    );
 
     const identifiedValue = buildIdentifiedValue(
       resolvedType,
       manualValue,
-      manualAttributes
+      scopedAttributes
     );
 
     const valuesToSave = [
@@ -886,11 +940,11 @@ export default function HomePage() {
     ].filter(Boolean);
 
     if (valuesToSave.length === 0) {
-      setError('Identifierat varde kravs for manuell registrering.');
+      setError('Fyll i uppgifter for vald underkategori innan sparning.');
       return;
     }
 
-    const missing = getMissingRequiredFields(resolvedType, manualAttributes).map(
+    const missing = getMissingRequiredFields(resolvedType, scopedAttributes).map(
       (field) => field.label
     );
 
@@ -909,7 +963,7 @@ export default function HomePage() {
           identifiedValue: value,
           assembly: manualAssembly,
           subComponent: manualSubComponent.trim(),
-          attributes: manualAttributes,
+          attributes: scopedAttributes,
           notes: manualNotes.trim() || 'Manuellt registrerad post.'
         });
       }
@@ -944,16 +998,30 @@ export default function HomePage() {
       ? component.componentType
       : 'Kilrem';
     const defaultScope = getDefaultScopeForComponentType(componentType);
+    const componentAssembly =
+      (component.assembly as AssemblyOption | undefined) ?? defaultScope.assembly;
+    const baseAttributes = {
+      ...createEmptyAttributes(componentType),
+      ...component.attributes
+    };
+    const scopedAttributes =
+      componentType === 'Lager' &&
+      normalizeScopeToken(componentAssembly) === 'flakt' &&
+      !baseAttributes.lagerFram?.trim() &&
+      baseAttributes.lagerBak?.trim()
+        ? {
+            ...baseAttributes,
+            lagerFram: baseAttributes.lagerBak,
+            lagerBak: ''
+          }
+        : baseAttributes;
 
     setEditingComponentId(component.id);
     setEditingComponentType(componentType);
-    setEditingAssembly((component.assembly as AssemblyOption | undefined) ?? defaultScope.assembly);
+    setEditingAssembly(componentAssembly);
     setEditingSubComponent(component.subComponent ?? defaultScope.subComponent);
     setEditingIdentifiedValue(component.identifiedValue);
-    setEditingAttributes({
-      ...createEmptyAttributes(componentType),
-      ...component.attributes
-    });
+    setEditingAttributes(scopedAttributes);
     setEditingNotes(component.notes ?? '');
   };
 
@@ -995,19 +1063,24 @@ export default function HomePage() {
       editingAssembly,
       editingSubComponent.trim()
     );
+    const scopedAttributes = sanitizeAttributesForScope(
+      resolvedType,
+      editingAssembly,
+      editingAttributes
+    );
 
     const identifiedValue = buildIdentifiedValue(
       resolvedType,
       editingIdentifiedValue,
-      editingAttributes
+      scopedAttributes
     );
 
     if (!identifiedValue.trim()) {
-      setError('Identifierat varde kravs.');
+      setError('Fyll i uppgifter for vald underkategori innan sparning.');
       return;
     }
 
-    const missing = getMissingRequiredFields(resolvedType, editingAttributes).map(
+    const missing = getMissingRequiredFields(resolvedType, scopedAttributes).map(
       (field) => field.label
     );
 
@@ -1024,7 +1097,7 @@ export default function HomePage() {
         identifiedValue: identifiedValue.trim(),
         assembly: editingAssembly,
         subComponent: editingSubComponent.trim(),
-        attributes: editingAttributes,
+        attributes: scopedAttributes,
         notes: editingNotes.trim() || undefined
       });
 
@@ -1437,15 +1510,6 @@ export default function HomePage() {
                   </select>
                 </label>
 
-                <label>
-                  {manualComponentType === '\u00d6vrigt' ? 'Notering' : 'Identifierat varde'}
-                  <input
-                    value={manualValue}
-                    onChange={(event) => setManualValue(event.target.value)}
-                    placeholder='Exempel: SPA 1180, 6205-2RS C3'
-                  />
-                </label>
-
                 {manualAllowsMultiple && (
                   <label className={styles.fullRow}>
                     Flera poster (en per rad)
@@ -1457,7 +1521,7 @@ export default function HomePage() {
                   </label>
                 )}
 
-                {COMPONENT_FIELD_CONFIG[manualComponentType].map((field) => (
+                {manualFieldConfig.map((field) => (
                   <label key={field.key}>
                     {field.label}
                     <input
@@ -1570,16 +1634,7 @@ export default function HomePage() {
                               </select>
                             </label>
 
-                            <label>
-                              Identifierat värde
-                              <input
-                                value={editingIdentifiedValue}
-                                onChange={(event) => setEditingIdentifiedValue(event.target.value)}
-                                placeholder='Exempel: SPA 1180, 6205-2RS C3'
-                              />
-                            </label>
-
-                            {COMPONENT_FIELD_CONFIG[editingComponentType].map((field) => (
+                            {editingFieldConfig.map((field) => (
                               <label key={field.key}>
                                 {field.label}
                                 <input
