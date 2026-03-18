@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 type Props = {
   onCapture: (dataUrl: string) => void | Promise<void>;
@@ -13,8 +13,12 @@ type Props = {
   uploadLabel?: string;
 };
 
+type FileSource = 'camera' | 'gallery';
+
+const IMAGE_ACCEPT = 'image/*,image/heic,image/heif';
 const MAX_IMAGE_DIMENSION = 1600;
 const MAX_IMAGE_BYTES = 2_400_000;
+const MAX_RAW_FILE_BYTES = 18_000_000;
 
 function estimateDataUrlBytes(dataUrl: string): number {
   const commaIndex = dataUrl.indexOf(',');
@@ -104,7 +108,7 @@ function loadImage(source: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Kunde inte lÃ¤sa bildfilen.'));
+    image.onerror = () => reject(new Error('Kunde inte läsa bildfilen.'));
     image.src = source;
   });
 }
@@ -130,6 +134,31 @@ async function normalizeImageDataUrl(dataUrl: string): Promise<string> {
   return encodeCanvasToJpeg(canvas, MAX_IMAGE_BYTES);
 }
 
+function isImageFile(file: File): boolean {
+  if (file.type.startsWith('image/')) {
+    return true;
+  }
+
+  return /\.(heic|heif)$/i.test(file.name);
+}
+
+function toUserErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : '';
+  if (!message) {
+    return 'Kunde inte hantera bilden. Prova igen med ett nytt foto.';
+  }
+
+  if (/quota|resource_exhausted|429|rate/i.test(message)) {
+    return 'AI-kvoten är slut just nu. Ta bilden och använd manuell registrering tills kvoten är tillbaka.';
+  }
+
+  if (/network|failed to fetch|fetch failed/i.test(message)) {
+    return 'Nätverksfel vid uppladdning. Kontrollera uppkoppling och försök igen.';
+  }
+
+  return message.slice(0, 240);
+}
+
 export function CameraCapture({
   onCapture,
   title = 'Fota objekt',
@@ -145,6 +174,15 @@ export function CameraCapture({
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastCaptureInfo, setLastCaptureInfo] = useState<string>('');
+
+  const isMobileDevice = useMemo(() => {
+    if (typeof navigator === 'undefined') {
+      return false;
+    }
+
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  }, []);
 
   const emitCapture = async (dataUrl: string) => {
     if (!dataUrl.trim()) {
@@ -159,15 +197,36 @@ export function CameraCapture({
     }
   };
 
+  const openInputPicker = (input: HTMLInputElement | null) => {
+    if (!input) {
+      return;
+    }
+
+    input.value = '';
+    try {
+      const inputWithPicker = input as HTMLInputElement & {
+        showPicker?: () => void;
+      };
+
+      if (typeof inputWithPicker.showPicker === 'function') {
+        inputWithPicker.showPicker();
+        return;
+      }
+    } catch {
+      // Fallback to click.
+    }
+
+    input.click();
+  };
+
   const handlePickGallery = () => {
     if (disabled || isUploading || isSubmitting) {
       return;
     }
 
-    if (galleryInputRef.current) {
-      galleryInputRef.current.value = '';
-      galleryInputRef.current.click();
-    }
+    setError(null);
+    setLastCaptureInfo('');
+    openInputPicker(galleryInputRef.current);
   };
 
   const handlePickDeviceCamera = () => {
@@ -175,22 +234,51 @@ export function CameraCapture({
       return;
     }
 
-    if (deviceCameraInputRef.current) {
-      deviceCameraInputRef.current.value = '';
-      deviceCameraInputRef.current.click();
-    }
+    setError(null);
+    setLastCaptureInfo('');
+    openInputPicker(deviceCameraInputRef.current);
   };
 
   const readFileToDataUrl = async (file: File): Promise<string> => {
     return new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result ?? ''));
-      reader.onerror = () => reject(new Error('Kunde inte lÃ¤sa filen.'));
+      reader.onerror = () => reject(new Error('Kunde inte läsa filen.'));
       reader.readAsDataURL(file);
     });
   };
 
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+  const processFileToDataUrl = async (file: File): Promise<string> => {
+    if (!isImageFile(file)) {
+      throw new Error('Filen måste vara en bild.');
+    }
+
+    if (file.size > MAX_RAW_FILE_BYTES) {
+      throw new Error('Bilden är för stor. Ta en ny bild med lägre upplösning.');
+    }
+
+    const rawDataUrl = await readFileToDataUrl(file);
+    if (!rawDataUrl) {
+      throw new Error('Filen är tom eller ogiltig.');
+    }
+
+    try {
+      return await normalizeImageDataUrl(rawDataUrl);
+    } catch (normalizeError) {
+      console.warn('Kunde inte normalisera bild. Faller tillbaka till originaldata.', normalizeError);
+
+      if (estimateDataUrlBytes(rawDataUrl) > MAX_RAW_FILE_BYTES) {
+        throw new Error('Kunde inte bearbeta bilden. Prova med ett nytt foto.');
+      }
+
+      return rawDataUrl;
+    }
+  };
+
+  const handleFileChange = async (
+    event: ChangeEvent<HTMLInputElement>,
+    source: FileSource
+  ) => {
     const file = event.target.files?.[0];
     event.target.value = '';
 
@@ -202,20 +290,16 @@ export function CameraCapture({
     setIsUploading(true);
 
     try {
-      const rawDataUrl = await readFileToDataUrl(file);
-      if (!rawDataUrl) {
-        throw new Error('Filen Ã¤r tom eller ogiltig.');
-      }
-
-      const normalizedDataUrl = await normalizeImageDataUrl(rawDataUrl);
-      if (!normalizedDataUrl) {
-        throw new Error('Kunde inte bearbeta bilden.');
-      }
-
-      await emitCapture(normalizedDataUrl);
+      const dataUrl = await processFileToDataUrl(file);
+      await emitCapture(dataUrl);
+      setLastCaptureInfo(
+        source === 'camera'
+          ? 'Foto taget och skickat för avläsning.'
+          : 'Foto uppladdat och skickat för avläsning.'
+      );
     } catch (uploadError) {
       console.error(uploadError);
-      setError('Kunde inte lÃ¤sa bilden. Prova ett annat foto eller ta nytt med kameran.');
+      setError(toUserErrorMessage(uploadError));
     } finally {
       setIsUploading(false);
     }
@@ -241,9 +325,7 @@ export function CameraCapture({
         }}
       >
         <div>
-          <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>
-            {subtitle}
-          </p>
+          <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>{subtitle}</p>
           <strong>{title}</strong>
         </div>
       </header>
@@ -258,7 +340,7 @@ export function CameraCapture({
           border: '1px solid rgba(148, 163, 184, 0.2)'
         }}
       >
-        VÃ¤lj hur du vill lÃ¤gga till bild fÃ¶r momentet.
+        Välj hur du vill lägga till bild för momentet.
       </div>
 
       {error && (
@@ -277,11 +359,23 @@ export function CameraCapture({
         </p>
       )}
 
+      {!!lastCaptureInfo && !isSubmitting && (
+        <p style={{ margin: '0.45rem 0 0', color: '#86efac', fontSize: '0.82rem' }}>
+          {lastCaptureInfo}
+        </p>
+      )}
+
+      {isMobileDevice && (
+        <p style={{ margin: '0.45rem 0 0', color: '#cbd5e1', fontSize: '0.8rem' }}>
+          Tips: Om kameran inte öppnas direkt, använd "Ladda upp foto" och välj "Ta bild".
+        </p>
+      )}
+
       <input
         ref={galleryInputRef}
         type='file'
-        accept='image/*'
-        onChange={handleFileChange}
+        accept={IMAGE_ACCEPT}
+        onChange={(event) => void handleFileChange(event, 'gallery')}
         style={{
           position: 'absolute',
           width: '1px',
@@ -294,9 +388,9 @@ export function CameraCapture({
       <input
         ref={deviceCameraInputRef}
         type='file'
-        accept='image/*'
+        accept={IMAGE_ACCEPT}
         capture='environment'
-        onChange={handleFileChange}
+        onChange={(event) => void handleFileChange(event, 'camera')}
         style={{
           position: 'absolute',
           width: '1px',
@@ -311,12 +405,12 @@ export function CameraCapture({
           onClick={handlePickDeviceCamera}
           disabled={actionsDisabled}
           style={{
-            flex: 1,
+            flex: isMobileDevice ? '1 1 100%' : 1,
+            minHeight: '2.9rem',
             padding: '0.85rem',
             borderRadius: '999px',
             border: 'none',
-            background:
-              'linear-gradient(120deg, rgba(94,234,212,0.8), rgba(59,130,246,0.9))',
+            background: 'linear-gradient(120deg, rgba(94,234,212,0.8), rgba(59,130,246,0.9))',
             color: '#020617',
             fontWeight: 700,
             fontSize: '1rem',
@@ -331,6 +425,8 @@ export function CameraCapture({
           onClick={handlePickGallery}
           disabled={actionsDisabled}
           style={{
+            flex: isMobileDevice ? '1 1 100%' : undefined,
+            minHeight: '2.9rem',
             padding: '0.85rem 1rem',
             borderRadius: '999px',
             border: '1px solid rgba(148,163,184,0.45)',
@@ -340,7 +436,7 @@ export function CameraCapture({
             opacity: actionsDisabled ? 0.55 : 1
           }}
         >
-          {isUploading ? 'LÃ¤ser fil...' : uploadLabel}
+          {isUploading ? 'Läser fil...' : uploadLabel}
         </button>
       </div>
     </section>

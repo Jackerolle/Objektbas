@@ -12,7 +12,19 @@ export const metadata: Metadata = {
   title: 'Objektbas',
   description: 'Fältanpassad webbapp för dokumentation av ventilationsaggregat.',
   manifest: '/manifest.webmanifest',
-  authors: [{ name: 'Objektbas-teamet' }]
+  authors: [{ name: 'Objektbas-teamet' }],
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Objektbas'
+  },
+  icons: {
+    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '192x192' }],
+    icon: [
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+    ]
+  }
 };
 
 export const viewport: Viewport = {
@@ -28,10 +40,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="sv" className={spaceGrotesk.variable}>
+    <html lang='sv' className={spaceGrotesk.variable}>
       <body>
         <Providers>{children}</Providers>
       </body>
     </html>
   );
 }
+

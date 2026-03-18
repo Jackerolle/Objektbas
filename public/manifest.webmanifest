@@ -1,11 +1,15 @@
 {
+  "id": "/",
   "name": "Objektbas",
   "short_name": "Objektbas",
-  "description": "PWA for att inventera objekt och utrustning i faltet.",
+  "description": "Fältapp för registrering och sökning av ventilationsaggregat.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#020617",
   "theme_color": "#0f172a",
+  "lang": "sv-SE",
   "icons": [
     {
       "src": "/icons/icon-192.png",
