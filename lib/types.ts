@@ -28,7 +28,7 @@ export type ObservationPayload = {
 
 export type SyncState = 'idle' | 'syncing' | 'offline';
 
-export type AppMode = 'lagg-till' | 'sok';
+export type AppMode = 'lagg-till' | 'sok' | 'importera';
 
 export type ComponentType =
   | 'Motor'
@@ -92,4 +92,37 @@ export type AggregateRecord = {
   createdAt: string;
   updatedAt: string;
   components: AggregateComponent[];
+};
+
+export type ImportAggregatesResult = {
+  totalRows: number;
+  importedAggregates: number;
+  createdAggregates: number;
+  updatedAggregates: number;
+  importedComponents: number;
+  skippedRows: number;
+  warnings: string[];
+};
+
+export type ImportPreviewAggregate = {
+  systemPositionId: string;
+  position?: string;
+  department?: string;
+  notes?: string;
+  componentsCount: number;
+  sampleComponents: Array<{
+    componentType: string;
+    identifiedValue: string;
+    notes?: string;
+    attributes: Record<string, string>;
+  }>;
+};
+
+export type ImportPreviewResult = {
+  totalRows: number;
+  skippedRows: number;
+  parsedAggregates: number;
+  parsedComponents: number;
+  warnings: string[];
+  previewAggregates: ImportPreviewAggregate[];
 };

@@ -1,6 +1,7 @@
 ﻿import { NextResponse } from 'next/server';
 import { analyzeSystemPositionWithGemini } from '@/lib/server/gemini';
 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {

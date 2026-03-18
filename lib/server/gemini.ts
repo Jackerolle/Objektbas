@@ -1,7 +1,7 @@
 ﻿import {
   createEmptyAttributes,
-  isKnownComponentType,
-  normalizeAttributes
+  normalizeAttributes,
+  resolveComponentType
 } from '@/lib/componentSchema';
 import { ComponentAnalysis, SystemPositionAnalysis } from '@/lib/types';
 
@@ -15,30 +15,6 @@ type GeminiTextJson = {
   identifiedValue?: string;
   suggestedAttributes?: Record<string, unknown>;
 };
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-function isQuotaError(error: unknown): boolean {
-  const message = toErrorMessage(error).toLowerCase();
-  return (
-    message.includes('429') ||
-    message.includes('resource_exhausted') ||
-    message.includes('quota exceeded')
-  );
-}
-
-function conciseErrorSuffix(error: unknown): string {
-  const message = toErrorMessage(error);
-  const normalized = message.replace(/\s+/g, ' ').trim();
-  const short = normalized.slice(0, 140);
-  return short ? ` (${short}${normalized.length > 140 ? '...' : ''})` : '';
-}
 
 function getGeminiConfig() {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -89,7 +65,11 @@ function extractGeminiText(responseJson: unknown): string {
     }>;
   };
 
-  return root.candidates?.[0]?.content?.parts?.find((part) => typeof part.text === 'string')?.text ?? '';
+  return (
+    root.candidates?.[0]?.content?.parts?.find(
+      (part) => typeof part.text === 'string'
+    )?.text ?? ''
+  );
 }
 
 function parseGeminiJson(raw: string): GeminiTextJson {
@@ -102,16 +82,14 @@ function parseGeminiJson(raw: string): GeminiTextJson {
     ? trimmed.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim()
     : trimmed;
 
-  const direct = withoutFence;
-
   try {
-    return JSON.parse(direct) as GeminiTextJson;
+    return JSON.parse(withoutFence) as GeminiTextJson;
   } catch {
-    const start = direct.indexOf('{');
-    const end = direct.lastIndexOf('}');
+    const start = withoutFence.indexOf('{');
+    const end = withoutFence.lastIndexOf('}');
 
     if (start >= 0 && end > start) {
-      const candidate = direct.slice(start, end + 1);
+      const candidate = withoutFence.slice(start, end + 1);
       try {
         return JSON.parse(candidate) as GeminiTextJson;
       } catch {
@@ -123,7 +101,10 @@ function parseGeminiJson(raw: string): GeminiTextJson {
   }
 }
 
-async function callGemini(prompt: string, imageDataUrl: string): Promise<GeminiTextJson> {
+async function callGemini(
+  prompt: string,
+  imageDataUrl: string
+): Promise<GeminiTextJson> {
   const { apiKey, model } = getGeminiConfig();
 
   if (!apiKey) {
@@ -140,10 +121,7 @@ async function callGemini(prompt: string, imageDataUrl: string): Promise<GeminiT
       body: JSON.stringify({
         contents: [
           {
-            parts: [
-              { text: prompt },
-              { inline_data: { mime_type: mimeType, data } }
-            ]
+            parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data } }]
           }
         ],
         generationConfig: {
@@ -177,102 +155,74 @@ export async function analyzeSystemPositionWithGemini(
     return {
       systemPositionId: 'MANUELL-KRAVS',
       confidence: 0.15,
-      notes: 'GEMINI_API_KEY saknas. Bekräfta ID manuellt.',
+      notes: 'GEMINI_API_KEY saknas. Bekrafta ID manuellt.',
       provider: 'fallback',
       requiresManualConfirmation: true
     };
   }
 
   const prompt =
-    'Du är OCR-assistent. Läs endast systempositionens ID från bilden. ' +
-    'Returnera ENDAST JSON med fälten systemPositionId, confidence och notes. Inga markdown-block.';
+    'Du ar OCR-assistent. Las endast systempositionens ID fran bilden. ' +
+    'Returnera ENDAST JSON med falten systemPositionId, confidence och notes. Inga markdown-block.';
 
-  try {
-    const parsed = await callGemini(prompt, imageDataUrl);
-    const systemPositionId = sanitizeSystemPositionId(parsed.systemPositionId) || 'OKAND';
+  const parsed = await callGemini(prompt, imageDataUrl);
+  const systemPositionId = sanitizeSystemPositionId(parsed.systemPositionId) || 'OKAND';
 
-    return {
-      systemPositionId,
-      confidence: clampConfidence(parsed.confidence),
-      notes: parsed.notes?.trim() || 'Kontrollera ID innan du sparar.',
-      provider: 'gemini',
-      requiresManualConfirmation: true
-    };
-  } catch (error) {
-    const quotaText = isQuotaError(error)
-      ? 'Gemini-kvot nådd. Ange ID manuellt.'
-      : 'Gemini-fel. Ange ID manuellt.';
-
-    return {
-      systemPositionId: 'MANUELL-KRAVS',
-      confidence: 0.12,
-      notes: `${quotaText}${conciseErrorSuffix(error)}`,
-      provider: 'fallback',
-      requiresManualConfirmation: true
-    };
-  }
+  return {
+    systemPositionId,
+    confidence: clampConfidence(parsed.confidence),
+    notes: parsed.notes?.trim() || 'Kontrollera ID innan du sparar.',
+    provider: 'gemini',
+    requiresManualConfirmation: true
+  };
 }
 
 export async function analyzeComponentWithGemini(
   componentType: string,
   imageDataUrl: string
 ): Promise<ComponentAnalysis> {
-  if (!isKnownComponentType(componentType)) {
-    throw new Error('Okänd komponenttyp.');
+  const resolvedComponentType = resolveComponentType(componentType);
+  if (!resolvedComponentType) {
+    throw new Error('Okand komponenttyp.');
   }
 
   const { apiKey } = getGeminiConfig();
 
   if (!apiKey) {
     return {
-      componentType,
-      identifiedValue: `Manuell avläsning: ${componentType}`,
+      componentType: resolvedComponentType,
+      identifiedValue: `Manuell avlasning: ${resolvedComponentType}`,
       confidence: 0.1,
-      notes: 'GEMINI_API_KEY saknas. Fyll i fält manuellt.',
+      notes: 'GEMINI_API_KEY saknas. Fyll i falt manuellt.',
       provider: 'fallback',
       requiresManualConfirmation: true,
-      suggestedAttributes: createEmptyAttributes(componentType)
+      suggestedAttributes: createEmptyAttributes(resolvedComponentType)
     };
   }
 
-  const requiredFields = Object.keys(createEmptyAttributes(componentType));
+  const requiredFields = Object.keys(createEmptyAttributes(resolvedComponentType));
 
   const prompt =
-    `Du analyserar ventilationskomponenten '${componentType}'. ` +
-    `Obligatoriska fält är: ${requiredFields.join(', ')}. ` +
-    'Returnera ENDAST JSON med fälten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
-    'suggestedAttributes ska vara ett objekt med nyckel/värde. Inga markdown-block.';
+    `Du analyserar ventilationskomponenten '${resolvedComponentType}'. ` +
+    `Obligatoriska falt ar: ${requiredFields.join(', ')}. ` +
+    'Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
+    'suggestedAttributes ska vara ett objekt med nyckel/varde. Inga markdown-block.';
 
-  try {
-    const parsed = await callGemini(prompt, imageDataUrl);
+  const parsed = await callGemini(prompt, imageDataUrl);
 
-    const suggestedAttributes = {
-      ...createEmptyAttributes(componentType),
-      ...normalizeAttributes(parsed.suggestedAttributes)
-    };
+  const suggestedAttributes = {
+    ...createEmptyAttributes(resolvedComponentType),
+    ...normalizeAttributes(parsed.suggestedAttributes)
+  };
 
-    return {
-      componentType,
-      identifiedValue: parsed.identifiedValue?.trim() || `Okänd ${componentType}`,
-      confidence: clampConfidence(parsed.confidence),
-      notes: parsed.notes?.trim() || 'Bekräfta komponentdata innan sparning.',
-      provider: 'gemini',
-      requiresManualConfirmation: true,
-      suggestedAttributes
-    };
-  } catch (error) {
-    const quotaText = isQuotaError(error)
-      ? 'Gemini-kvot nådd. Kontrollera värden manuellt.'
-      : 'Gemini-fel. Kontrollera värden manuellt.';
-
-    return {
-      componentType,
-      identifiedValue: `Manuell avläsning: ${componentType}`,
-      confidence: 0.1,
-      notes: `${quotaText}${conciseErrorSuffix(error)}`,
-      provider: 'fallback',
-      requiresManualConfirmation: true,
-      suggestedAttributes: createEmptyAttributes(componentType)
-    };
-  }
+  return {
+    componentType: resolvedComponentType,
+    identifiedValue:
+      parsed.identifiedValue?.trim() || `Okand ${resolvedComponentType}`,
+    confidence: clampConfidence(parsed.confidence),
+    notes: parsed.notes?.trim() || 'Bekrafta komponentdata innan sparning.',
+    provider: 'gemini',
+    requiresManualConfirmation: true,
+    suggestedAttributes
+  };
 }

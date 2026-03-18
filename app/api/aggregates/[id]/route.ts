@@ -6,6 +6,7 @@ import {
 } from '@/lib/server/aggregateRepository';
 import { CreateAggregatePayload } from '@/lib/types';
 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type RouteContext = {

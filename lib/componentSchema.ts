@@ -48,8 +48,27 @@ export const COMPONENT_FIELD_CONFIG: Record<ComponentType, ComponentFieldConfig[
   ]
 };
 
+const ATTRIBUTE_KEY_LOOKUP = new Map<string, string>();
+
+for (const field of Object.values(COMPONENT_FIELD_CONFIG).flat()) {
+  ATTRIBUTE_KEY_LOOKUP.set(normalizeAttributeToken(field.key), field.key);
+}
+
+function normalizeAttributeToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 export function isKnownComponentType(value: string): value is ComponentType {
-  return COMPONENT_OPTIONS.includes(value as ComponentType);
+  return resolveComponentType(value) !== null;
+}
+
+export function resolveComponentType(value: string): ComponentType | null {
+  const normalized = value.trim().toLowerCase();
+  const match = COMPONENT_OPTIONS.find(
+    (componentType) => componentType.toLowerCase() === normalized
+  );
+
+  return match ?? null;
 }
 
 export function getRequiredFieldConfigs(componentType: ComponentType): ComponentFieldConfig[] {
@@ -79,7 +98,12 @@ export function normalizeAttributes(
       continue;
     }
 
-    result[normalizedKey] = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+    const canonical =
+      ATTRIBUTE_KEY_LOOKUP.get(normalizeAttributeToken(normalizedKey)) ??
+      normalizedKey;
+
+    result[canonical] =
+      typeof value === 'string' ? value.trim() : String(value ?? '').trim();
   }
 
   return result;

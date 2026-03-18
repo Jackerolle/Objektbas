@@ -2,12 +2,13 @@
 import {
   createEmptyAttributes,
   getMissingRequiredFields,
-  isKnownComponentType,
-  normalizeAttributes
+  normalizeAttributes,
+  resolveComponentType
 } from '@/lib/componentSchema';
 import { addComponentToAggregate } from '@/lib/server/aggregateRepository';
 import { CreateAggregateComponentPayload } from '@/lib/types';
 
+export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type RouteContext = {
@@ -28,7 +29,8 @@ export async function POST(request: Request, context: RouteContext) {
       return NextResponse.json({ error: 'Identifierat värde krävs.' }, { status: 400 });
     }
 
-    if (!isKnownComponentType(payload.componentType)) {
+    const resolvedComponentType = resolveComponentType(payload.componentType);
+    if (!resolvedComponentType) {
       return NextResponse.json(
         { error: 'Okänd komponenttyp.' },
         { status: 400 }
@@ -36,12 +38,12 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const normalizedAttributes = {
-      ...createEmptyAttributes(payload.componentType),
+      ...createEmptyAttributes(resolvedComponentType),
       ...normalizeAttributes(payload.attributes)
     };
 
     const missing = getMissingRequiredFields(
-      payload.componentType,
+      resolvedComponentType,
       normalizedAttributes
     );
 
@@ -58,7 +60,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     const updated = await addComponentToAggregate(context.params.id, {
       ...payload,
-      componentType: payload.componentType,
+      componentType: resolvedComponentType,
       identifiedValue: payload.identifiedValue.trim(),
       assembly: payload.assembly?.trim() || undefined,
       subComponent: payload.subComponent?.trim() || undefined,
