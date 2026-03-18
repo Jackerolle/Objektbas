@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "check:page-ui": "node scripts/verify-page-ui.js",
+    "prebuild": "npm run check:page-ui",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

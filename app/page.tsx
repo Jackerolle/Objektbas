@@ -6,678 +6,1164 @@ import {
   analyzeComponentImage,
   analyzeSystemPosition,
   createAggregate,
-  importAggregatesFile,
-  previewAggregatesFile,
-  searchAggregates
+  deleteAggregate,
+  deleteAggregateComponent,
+  searchAggregates,
+  updateAggregateComponent,
+  updateAggregate
 } from '@/lib/api';
 import {
   COMPONENT_FIELD_CONFIG,
+  COMPONENT_OPTIONS,
   createEmptyAttributes,
-  getMissingRequiredFields
+  isKnownComponentType
 } from '@/lib/componentSchema';
+import {
+  loadAggregateLocalPhotos,
+  saveAggregateLocalPhoto
+} from '@/lib/localPhotoStore';
 import {
   AggregateRecord,
   AppMode,
-  ComponentAnalysis,
   ComponentType,
-  ImportAggregatesResult,
-  ImportPreviewResult,
   SystemPositionAnalysis
 } from '@/lib/types';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import styles from './page.module.css';
 
-type MainCategory = 'Aggregat' | 'Motor' | 'Fl\u00e4kt' | '\u00d6vrigt';
-
-type SubCategoryOption = {
+type CaptureTask = {
+  id: string;
   label: string;
-  componentType: ComponentType;
+  description: string;
+  componentType?: ComponentType;
+  required?: boolean;
 };
 
-const SUBCATEGORY_BY_MAIN: Record<MainCategory, SubCategoryOption[]> = {
-  Aggregat: [
-    { label: 'Kilrem', componentType: 'Kilrem' },
-    { label: 'Filter', componentType: 'Filter' },
-    { label: 'Kolfilter', componentType: 'Kolfilter' }
-  ],
-  Motor: [
-    { label: 'Motorskylt', componentType: 'Motorskylt' },
-    { label: 'Remskiva', componentType: 'Remskiva' },
-    { label: 'Bussning', componentType: 'Bussning' },
-    { label: 'Axeldiameter', componentType: 'Axeldiameter' },
-    { label: 'Lager', componentType: 'Lager' }
-  ],
-  'Fl\u00e4kt': [
-    { label: 'Remskiva', componentType: 'Remskiva' },
-    { label: 'Bussning', componentType: 'Bussning' },
-    { label: 'Axeldiameter', componentType: 'Axeldiameter' },
-    { label: 'Lager', componentType: 'Lager' }
-  ],
-  '\u00d6vrigt': [{ label: 'Notering', componentType: '\u00d6vrigt' }]
+type SortOrder = 'nyast' | 'aldst';
+type StartMethod = 'foto' | 'manuell';
+
+const ASSEMBLY_OPTIONS = ['Motor', 'Fläkt', 'Aggregat', 'Övrigt'] as const;
+type AssemblyOption = (typeof ASSEMBLY_OPTIONS)[number];
+
+const SUB_COMPONENT_PRESETS: Record<AssemblyOption, string[]> = {
+  Motor: ['Motorskylt', 'Remskiva', 'Bussning', 'Lager', 'Axeldiameter', 'Kilrem'],
+  Fläkt: ['Fläkthjul', 'Remskiva', 'Lager', 'Axeldiameter', 'Bussning', 'Kilrem'],
+  Aggregat: ['Filter', 'Objektskylt', 'Spjäll', 'Värmebatteri'],
+  Övrigt: []
 };
 
-const MULTI_VALUE_TYPES = new Set<ComponentType>([
-  'Filter',
-  'Kolfilter',
-  '\u00d6vrigt'
-]);
+const DEPARTMENT_PRESETS = [
+  'Produktion',
+  'Underhåll',
+  'Energi',
+  'Logistik',
+  'Verkstad',
+  'Kvalitet'
+];
 
-const MAIN_CATEGORY_OPTIONS = Object.keys(
-  SUBCATEGORY_BY_MAIN
-) as MainCategory[];
-
-function splitLines(value: string): string[] {
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function buildDefaultValue(
-  componentType: ComponentType,
-  typedValue: string,
-  attributes: Record<string, string>
-): string {
-  const direct = typedValue.trim();
-  if (direct) {
-    return direct;
+const CAPTURE_TASKS: CaptureTask[] = [
+  {
+    id: 'skylt',
+    label: 'Objektskylt',
+    description: 'Steg 1: läs system-ID och skapa aggregat.',
+    required: true
+  },
+  {
+    id: 'kilrem',
+    label: 'Kilrem',
+    description: 'Profil, längd och antal remmar.',
+    componentType: 'Kilrem'
+  },
+  {
+    id: 'filter',
+    label: 'Filter',
+    description: 'Filterklass och dimension.',
+    componentType: 'Filter'
+  },
+  {
+    id: 'remskiva',
+    label: 'Remskiva',
+    description: 'Driv- och medremskiva med spår.',
+    componentType: 'Remskiva'
+  },
+  {
+    id: 'lager',
+    label: 'Lager',
+    description: 'Lagertyp, placering och antal.',
+    componentType: 'Lager'
+  },
+  {
+    id: 'motor',
+    label: 'Motor',
+    description: 'Motormodell, effekt och märkström.',
+    componentType: 'Motor'
+  },
+  {
+    id: 'flakt',
+    label: 'Fläkt',
+    description: 'Fläkttyp, diameter och rotationsriktning.',
+    componentType: 'Fläkt'
   }
+];
 
-  if (componentType === 'Lager') {
-    const front = attributes.lagerFram?.trim();
-    const back = attributes.lagerBak?.trim();
-    if (front && back) {
-      return `Fram: ${front}, Bak: ${back}`;
-    }
-    if (front) {
-      return front;
-    }
-    if (back) {
-      return back;
-    }
-  }
-
-  if (componentType === 'Remskiva' && attributes.remskivaNamn?.trim()) {
-    return attributes.remskivaNamn.trim();
-  }
-
-  if (componentType === 'Bussning' && attributes.bussningStorlek?.trim()) {
-    return attributes.bussningStorlek.trim();
-  }
-
-  if (componentType === 'Axeldiameter' && attributes.axeldiameterMm?.trim()) {
-    return `${attributes.axeldiameterMm.trim()} mm`;
-  }
-
-  if (componentType === 'Motorskylt' && attributes.motorModell?.trim()) {
-    return attributes.motorModell.trim();
-  }
-
-  if (
-    (componentType === 'Filter' || componentType === 'Kolfilter') &&
-    attributes.filterNamn?.trim()
-  ) {
-    return attributes.filterNamn.trim();
-  }
-
-  return '';
-}
+const REQUIRED_TASK_IDS = CAPTURE_TASKS.filter((task) => task.required).map(
+  (task) => task.id
+);
 
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function findTask(taskId: string): CaptureTask {
+  return CAPTURE_TASKS.find((task) => task.id === taskId) ?? CAPTURE_TASKS[0];
+}
+
+function getNextTaskId(currentTaskId: string, captured: Record<string, string>): string {
+  const currentIndex = CAPTURE_TASKS.findIndex((task) => task.id === currentTaskId);
+  const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
+
+  for (let i = startIndex; i < CAPTURE_TASKS.length; i += 1) {
+    const task = CAPTURE_TASKS[i];
+    if (!captured[task.id]) {
+      return task.id;
+    }
+  }
+
+  return currentTaskId;
+}
+
+function normalizeAutoAttributes(
+  componentType: ComponentType,
+  suggested: Record<string, string> | undefined
+): Record<string, string> {
+  const template = createEmptyAttributes(componentType);
+
+  for (const field of COMPONENT_FIELD_CONFIG[componentType]) {
+    const value = suggested?.[field.key]?.trim();
+    template[field.key] = value || 'Ej avläst';
+  }
+
+  return template;
+}
+
+function normalizeSystemPositionId(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
+function getDefaultScopeForTask(task: CaptureTask): {
+  assembly: AssemblyOption;
+  subComponent: string;
+} {
+  switch (task.id) {
+    case 'motor':
+      return { assembly: 'Motor', subComponent: 'Motorskylt' };
+    case 'flakt':
+      return { assembly: 'Fläkt', subComponent: 'Fläkthjul' };
+    case 'remskiva':
+      return { assembly: 'Motor', subComponent: 'Remskiva' };
+    case 'lager':
+      return { assembly: 'Motor', subComponent: 'Lager' };
+    case 'kilrem':
+      return { assembly: 'Motor', subComponent: 'Kilrem' };
+    case 'filter':
+      return { assembly: 'Aggregat', subComponent: 'Filter' };
+    default:
+      return { assembly: 'Aggregat', subComponent: task.label };
+  }
+}
+
+function getDefaultScopeForComponentType(componentType: ComponentType): {
+  assembly: AssemblyOption;
+  subComponent: string;
+} {
+  switch (componentType) {
+    case 'Motor':
+      return { assembly: 'Motor', subComponent: 'Motorskylt' };
+    case 'Fläkt':
+      return { assembly: 'Fläkt', subComponent: 'Fläkthjul' };
+    case 'Remskiva':
+      return { assembly: 'Motor', subComponent: 'Remskiva' };
+    case 'Lager':
+      return { assembly: 'Motor', subComponent: 'Lager' };
+    case 'Kilrem':
+      return { assembly: 'Motor', subComponent: 'Kilrem' };
+    case 'Filter':
+      return { assembly: 'Aggregat', subComponent: 'Filter' };
+    default:
+      return { assembly: 'Övrigt', subComponent: componentType };
+  }
+}
+
 export default function HomePage() {
   const [mode, setMode] = useState<AppMode>('lagg-till');
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [startMethod, setStartMethod] = useState<StartMethod | null>(null);
 
-  const [systemPositionImage, setSystemPositionImage] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('skylt');
+  const [capturedPhotos, setCapturedPhotos] = useState<Record<string, string>>({});
+
   const [systemPositionId, setSystemPositionId] = useState('');
-  const [position, setPosition] = useState('');
   const [department, setDepartment] = useState('');
+  const [position, setPosition] = useState('');
   const [aggregateNotes, setAggregateNotes] = useState('');
-  const [systemAnalysis, setSystemAnalysis] = useState<SystemPositionAnalysis | null>(null);
 
   const [currentAggregate, setCurrentAggregate] = useState<AggregateRecord | null>(null);
-  const [mainCategory, setMainCategory] = useState<MainCategory>('Aggregat');
-  const [componentType, setComponentType] = useState<ComponentType>('Kilrem');
-  const [componentValue, setComponentValue] = useState('');
-  const [multiValueInput, setMultiValueInput] = useState('');
-  const [componentAttributes, setComponentAttributes] = useState<Record<string, string>>(
+  const [isSavingAggregate, setIsSavingAggregate] = useState(false);
+
+  const [captureAssembly, setCaptureAssembly] = useState<AssemblyOption>('Motor');
+  const [captureSubComponent, setCaptureSubComponent] = useState('Motorskylt');
+
+  const [manualComponentType, setManualComponentType] = useState<ComponentType>('Kilrem');
+  const [manualAssembly, setManualAssembly] = useState<AssemblyOption>('Motor');
+  const [manualSubComponent, setManualSubComponent] = useState('Kilrem');
+  const [manualValue, setManualValue] = useState('');
+  const [manualAttributes, setManualAttributes] = useState<Record<string, string>>(
     () => createEmptyAttributes('Kilrem')
   );
-  const [componentNotes, setComponentNotes] = useState('');
-  const [componentAnalysis, setComponentAnalysis] = useState<ComponentAnalysis | null>(null);
+  const [manualNotes, setManualNotes] = useState('');
+  const [isSavingManual, setIsSavingManual] = useState(false);
+
+  const [editingComponentId, setEditingComponentId] = useState<string | null>(null);
+  const [editingComponentType, setEditingComponentType] = useState<ComponentType>('Kilrem');
+  const [editingAssembly, setEditingAssembly] = useState<AssemblyOption>('Motor');
+  const [editingSubComponent, setEditingSubComponent] = useState('Kilrem');
+  const [editingIdentifiedValue, setEditingIdentifiedValue] = useState('');
+  const [editingAttributes, setEditingAttributes] = useState<Record<string, string>>(
+    () => createEmptyAttributes('Kilrem')
+  );
+  const [editingNotes, setEditingNotes] = useState('');
+  const [isSavingComponentEdit, setIsSavingComponentEdit] = useState(false);
+  const [deletingComponentId, setDeletingComponentId] = useState<string | null>(null);
+  const [deletingAggregateId, setDeletingAggregateId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AggregateRecord[]>([]);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [importPreview, setImportPreview] = useState<ImportPreviewResult | null>(null);
-  const [importResult, setImportResult] = useState<ImportAggregatesResult | null>(null);
-  const [importPreviewFingerprint, setImportPreviewFingerprint] = useState<string | null>(null);
+  const [departmentFilter, setDepartmentFilter] = useState('alla');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('nyast');
 
-  const [isAnalyzingSystem, setIsAnalyzingSystem] = useState(false);
-  const [isCreatingAggregate, setIsCreatingAggregate] = useState(false);
-  const [isAnalyzingComponent, setIsAnalyzingComponent] = useState(false);
-  const [isSavingComponent, setIsSavingComponent] = useState(false);
+  const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [isPreviewingImport, setIsPreviewingImport] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('');
 
-  const clearStatus = () => {
+  const selectedTask = findTask(selectedTaskId);
+  const aggregateReady = Boolean(currentAggregate);
+
+  const requiredDone = REQUIRED_TASK_IDS.filter((id) => Boolean(capturedPhotos[id])).length;
+  const completionRate = Math.round((requiredDone / REQUIRED_TASK_IDS.length) * 100);
+
+  const taskStatuses = useMemo(() => {
+    return CAPTURE_TASKS.map((task) => {
+      const captured = Boolean(capturedPhotos[task.id]);
+      const savedCount = task.componentType
+        ? (currentAggregate?.components.filter(
+            (component) => component.componentType === task.componentType
+          ).length ?? 0)
+        : 0;
+      const locked = !aggregateReady && task.id !== 'skylt';
+
+      return { ...task, captured, savedCount, locked };
+    });
+  }, [capturedPhotos, currentAggregate, aggregateReady]);
+
+  const departmentOptions = useMemo(() => {
+    const values = searchResults
+      .map((record) => record.department?.trim())
+      .filter((value): value is string => Boolean(value));
+
+    return ['alla', ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, 'sv-SE'))];
+  }, [searchResults]);
+
+  const filteredSearchResults = useMemo(() => {
+    const scoped =
+      departmentFilter === 'alla'
+        ? searchResults
+        : searchResults.filter((item) => (item.department ?? '') === departmentFilter);
+
+    return [...scoped].sort((a, b) => {
+      const aTime = new Date(a.updatedAt).getTime();
+      const bTime = new Date(b.updatedAt).getTime();
+      return sortOrder === 'nyast' ? bTime - aTime : aTime - bTime;
+    });
+  }, [departmentFilter, searchResults, sortOrder]);
+
+  const captureSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[captureAssembly] ?? [],
+    [captureAssembly]
+  );
+
+  const manualSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[manualAssembly] ?? [],
+    [manualAssembly]
+  );
+
+  const editingSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[editingAssembly] ?? [],
+    [editingAssembly]
+  );
+
+  const clearFeedback = () => {
     setError(null);
     setStatus('');
   };
 
-  const getImportFingerprint = (file: File) =>
-    `${file.name}:${file.size}:${file.lastModified}`;
-
-  const subCategoryOptions = SUBCATEGORY_BY_MAIN[mainCategory];
-  const selectedSubCategory =
-    subCategoryOptions.find((option) => option.componentType === componentType) ??
-    subCategoryOptions[0];
-  const selectedComponentType = selectedSubCategory.componentType;
-  const isMultiValueType = MULTI_VALUE_TYPES.has(selectedComponentType);
-
-  const handleSystemCapture = async (imageDataUrl: string) => {
-    clearStatus();
-    setSystemPositionImage(imageDataUrl);
-    setIsAnalyzingSystem(true);
-
-    try {
-      const analysis = await analyzeSystemPosition(imageDataUrl);
-      setSystemAnalysis(analysis);
-      setSystemPositionId(analysis.systemPositionId || '');
-      setStatus('Systemposition analyserad. Bekrafta ID innan du sparar.');
-    } catch (captureError) {
-      setError(`Kunde inte analysera systemposition: ${String(captureError)}`);
-    } finally {
-      setIsAnalyzingSystem(false);
-    }
+  const resetComponentEditing = () => {
+    setEditingComponentId(null);
+    setEditingComponentType('Kilrem');
+    setEditingAssembly('Motor');
+    setEditingSubComponent('Kilrem');
+    setEditingIdentifiedValue('');
+    setEditingAttributes(createEmptyAttributes('Kilrem'));
+    setEditingNotes('');
   };
 
-  const handleCreateAggregate = async () => {
-    clearStatus();
+  const syncAggregateInSearchResults = (nextAggregate: AggregateRecord) => {
+    setSearchResults((current) =>
+      current.map((item) => (item.id === nextAggregate.id ? nextAggregate : item))
+    );
+  };
 
-    if (!systemPositionId.trim()) {
-      setError('Systempositionens ID maste anges innan du kan spara aggregatet.');
+  useEffect(() => {
+    const defaults = getDefaultScopeForTask(findTask(selectedTaskId));
+    setCaptureAssembly(defaults.assembly);
+    setCaptureSubComponent(defaults.subComponent);
+  }, [selectedTaskId]);
+
+  const resetAggregateDraft = () => {
+    setSelectedTaskId('skylt');
+    setCapturedPhotos({});
+    setCurrentAggregate(null);
+    setSystemPositionId('');
+    setDepartment('');
+    setPosition('');
+    setAggregateNotes('');
+    const captureDefaults = getDefaultScopeForTask(findTask('skylt'));
+    setCaptureAssembly(captureDefaults.assembly);
+    setCaptureSubComponent(captureDefaults.subComponent);
+    const manualDefaults = getDefaultScopeForComponentType('Kilrem');
+    setManualAssembly(manualDefaults.assembly);
+    setManualSubComponent(manualDefaults.subComponent);
+    setManualComponentType('Kilrem');
+    setManualValue('');
+    setManualAttributes(createEmptyAttributes('Kilrem'));
+    setManualNotes('');
+    resetComponentEditing();
+  };
+
+  const openAddAggregateModal = () => {
+    clearFeedback();
+    setMode('lagg-till');
+    setIsAddModalOpen(true);
+  };
+
+  const chooseStartMethod = (method: StartMethod) => {
+    resetAggregateDraft();
+    setStartMethod(method);
+    setIsAddModalOpen(false);
+    setStatus(
+      method === 'foto'
+        ? 'Startläge: fota objektskylt.'
+        : 'Startläge: lägg in manuellt (fyll i systemposition och skapa aggregat).'
+    );
+  };
+
+  const buildAggregatePayload = (systemId: string) => ({
+    systemPositionId: normalizeSystemPositionId(systemId),
+    position: position.trim() || undefined,
+    department: department.trim() || undefined,
+    notes: aggregateNotes.trim() || undefined
+  });
+
+  const handleTaskSelection = (taskId: string) => {
+    const task = findTask(taskId);
+    if (!aggregateReady && task.id !== 'skylt') {
+      setError('Steg 1 är alltid objektskylt. Skapa aggregatet först.');
       return;
     }
 
-    setIsCreatingAggregate(true);
+    setSelectedTaskId(taskId);
+  };
 
+  const ensureAggregate = async (forcedSystemPositionId?: string): Promise<AggregateRecord> => {
+    if (currentAggregate) {
+      return currentAggregate;
+    }
+
+    const candidateId = normalizeSystemPositionId(forcedSystemPositionId || systemPositionId);
+    if (!candidateId) {
+      throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
+    }
+
+    const created = await createAggregate(buildAggregatePayload(candidateId));
+
+    setCurrentAggregate(created);
+    syncAggregateInSearchResults(created);
+    setSystemPositionId(created.systemPositionId);
+    return created;
+  };
+
+  const persistLocalPhoto = async (
+    aggregateId: string,
+    taskId: string,
+    imageDataUrl: string
+  ) => {
     try {
-      const aggregate = await createAggregate({
-        systemPositionId: systemPositionId.trim(),
-        position: position.trim() || undefined,
-        department: department.trim() || undefined,
-        notes: aggregateNotes.trim() || undefined,
-        systemPositionImageDataUrl: systemPositionImage || undefined
+      await saveAggregateLocalPhoto(aggregateId, taskId, imageDataUrl);
+    } catch (localError) {
+      console.warn('Kunde inte spara lokal bild för aggregat', localError);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentAggregate?.id) {
+      return;
+    }
+
+    let cancelled = false;
+    void loadAggregateLocalPhotos(currentAggregate.id)
+      .then((photos) => {
+        if (cancelled || !photos || !Object.keys(photos).length) {
+          return;
+        }
+
+        setCapturedPhotos((current) => ({ ...photos, ...current }));
+      })
+      .catch((localError) => {
+        console.warn('Kunde inte läsa lokala bilder för aggregat', localError);
       });
 
-      setCurrentAggregate(aggregate);
-      setComponentValue('');
-      setMultiValueInput('');
-      setComponentNotes('');
-      setComponentAnalysis(null);
-      setComponentAttributes(createEmptyAttributes(selectedComponentType));
-      setStatus(`Aggregat ${aggregate.systemPositionId} skapades. Nu kan du lagga till komponenter.`);
-    } catch (createError) {
-      setError(`Kunde inte skapa aggregat: ${String(createError)}`);
-    } finally {
-      setIsCreatingAggregate(false);
-    }
-  };
-
-  const handleComponentCapture = async (imageDataUrl: string) => {
-    clearStatus();
-
-    if (!currentAggregate) {
-      setError('Skapa aggregatet forst innan du lagger till komponenter.');
-      return;
-    }
-
-    setIsAnalyzingComponent(true);
-
-    try {
-      const analysis = await analyzeComponentImage(selectedComponentType, imageDataUrl);
-      setComponentAnalysis(analysis);
-      setComponentValue(analysis.identifiedValue || '');
-      setComponentAttributes((current) => ({
-        ...createEmptyAttributes(selectedComponentType),
-        ...current,
-        ...analysis.suggestedAttributes
-      }));
-      setStatus('Komponent analyserad. Bekrafta eller justera faltet innan sparning.');
-    } catch (analysisError) {
-      setError(`Kunde inte analysera komponenten: ${String(analysisError)}`);
-    } finally {
-      setIsAnalyzingComponent(false);
-    }
-  };
-
-  const handleSaveComponent = async () => {
-    clearStatus();
-
-    if (!currentAggregate) {
-      setError('Inget aggregat ar valt.');
-      return;
-    }
-
-    const defaultValue = buildDefaultValue(
-      selectedComponentType,
-      componentValue,
-      componentAttributes
-    );
-    const valuesToSave = [
-      defaultValue,
-      ...(isMultiValueType ? splitLines(multiValueInput) : [])
-    ].filter(Boolean);
-
-    if (valuesToSave.length === 0) {
-      setError('Komponentvarde maste fyllas i innan sparning.');
-      return;
-    }
-
-    const missingAttributeLabels = getMissingRequiredFields(
-      selectedComponentType,
-      componentAttributes
-    ).map((field) => field.label);
-
-    if (missingAttributeLabels.length > 0) {
-      setError(`Fyll i obligatoriska falt: ${missingAttributeLabels.join(', ')}.`);
-      return;
-    }
-
-    setIsSavingComponent(true);
-
-    try {
-      let updated = currentAggregate;
-      for (const identifiedValue of valuesToSave) {
-        updated = await addAggregateComponent(updated.id, {
-          componentType: selectedComponentType,
-          identifiedValue,
-          notes: componentNotes.trim() || undefined,
-          assembly: mainCategory,
-          subComponent: selectedSubCategory.label,
-          attributes: componentAttributes
-        });
-      }
-
-      setCurrentAggregate(updated);
-      setComponentValue('');
-      setMultiValueInput('');
-      setComponentAttributes(createEmptyAttributes(selectedComponentType));
-      setComponentNotes('');
-      setComponentAnalysis(null);
-      setStatus(
-        `${valuesToSave.length} post(er) sparade under ${mainCategory} / ${selectedSubCategory.label}.`
-      );
-    } catch (saveError) {
-      setError(`Kunde inte spara komponent: ${String(saveError)}`);
-    } finally {
-      setIsSavingComponent(false);
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAggregate?.id]);
 
   const handleSearch = async (queryOverride?: string) => {
-    clearStatus();
+    clearFeedback();
     setIsSearching(true);
 
     try {
       const query = queryOverride ?? searchQuery;
       const results = await searchAggregates(query);
       setSearchResults(results);
-      setStatus(`${results.length} resultat hittades.`);
+      setStatus(`${results.length} träffar i biblioteket.`);
     } catch (searchError) {
-      setError(`Kunde inte hamta resultat: ${String(searchError)}`);
+      setError(`Kunde inte hämta biblioteket: ${String(searchError)}`);
     } finally {
       setIsSearching(false);
     }
   };
 
-  const handleDownloadTemplate = () => {
-    const csv = [
-      'systemPositionId,position,department,notes,componentType,identifiedValue,componentNotes,attr_profil,attr_langd,attr_antal',
-      'VP-1001,Takplan 2,Produktion,Importerad post,Kilrep,SPA 1180,Bytt i januari,SPA,1180,2',
-      'VP-1001,Takplan 2,Produktion,Importerad post,Filter,F7 595x595x48,Kontrollerad,,,'
-    ].join('\\n');
+  const handleCapture = async (imageDataUrl: string) => {
+    clearFeedback();
+    setIsProcessingCapture(true);
 
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'aggregat-import-template.csv';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
-  const handlePreviewImport = async () => {
-    clearStatus();
-
-    if (!importFile) {
-      setError('Valj en Excel- eller CSV-fil for forhandsgranskning.');
-      return;
-    }
-
-    setIsPreviewingImport(true);
+    const task = selectedTask;
 
     try {
-      const preview = await previewAggregatesFile(importFile);
-      setImportPreview(preview);
-      setImportPreviewFingerprint(getImportFingerprint(importFile));
-      setImportResult(null);
-      setStatus(
-        `Forhandsgranskning klar: ${preview.parsedAggregates} aggregat och ${preview.parsedComponents} komponenter hittades.`
-      );
-    } catch (previewError) {
-      setError(`Kunde inte forhandsgranska filen: ${String(previewError)}`);
+      if (task.id === 'skylt') {
+        let analysis: SystemPositionAnalysis;
+
+        try {
+          analysis = await analyzeSystemPosition(imageDataUrl);
+        } catch (analysisError) {
+          analysis = {
+            systemPositionId: 'MANUELL-KRAVS',
+            confidence: 0.1,
+            notes: `AI-analys misslyckades: ${String(analysisError).slice(0, 120)}`,
+            provider: 'fallback',
+            requiresManualConfirmation: true
+          };
+        }
+
+        const aiId = normalizeSystemPositionId(analysis.systemPositionId);
+        const manualId = normalizeSystemPositionId(systemPositionId);
+        const resolvedId = aiId && aiId !== 'MANUELL-KRAVS' ? aiId : manualId;
+
+        if (!resolvedId) {
+          throw new Error(
+            'Kunde inte läsa ID från skylten. Ange Systemposition manuellt och ladda upp/fota skylten igen.'
+          );
+        }
+
+        setSystemPositionId(resolvedId);
+
+        const aggregate = currentAggregate
+          ? await updateAggregate(
+              currentAggregate.id,
+              buildAggregatePayload(resolvedId)
+            )
+          : await ensureAggregate(resolvedId);
+
+        setCurrentAggregate(aggregate);
+        syncAggregateInSearchResults(aggregate);
+        const nextCaptured = { ...capturedPhotos, skylt: imageDataUrl };
+        setCapturedPhotos(nextCaptured);
+        void persistLocalPhoto(aggregate.id, 'skylt', imageDataUrl);
+        setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
+
+        const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
+        const usedManual = !aiId || aiId === 'MANUELL-KRAVS';
+        setStatus(
+          usedManual
+            ? `Objektskylt sparad med manuellt ID ${resolvedId}.${analysisNote}`
+            : `Objektskylt tolkad (${toPercent(
+                analysis.confidence
+              )}) och aggregat sparat. Fortsätt med komponentfoton.${analysisNote}`
+        );
+        return;
+      }
+
+      if (!aggregateReady || !currentAggregate) {
+        throw new Error('Objektskylt måste registreras först för att skapa aggregat.');
+      }
+
+      if (!task.componentType) {
+        throw new Error('Felaktig fotopunkt.');
+      }
+
+      let identifiedValue = `Ej avläst (${task.label})`;
+      let attributes = createEmptyAttributes(task.componentType);
+      let note = 'Automatiskt registrerad utan säker AI-tolkning.';
+
+      try {
+        const analysis = await analyzeComponentImage(task.componentType, imageDataUrl);
+        identifiedValue = analysis.identifiedValue?.trim() || identifiedValue;
+        attributes = normalizeAutoAttributes(task.componentType, analysis.suggestedAttributes);
+        note = `Automatiskt registrerad (${toPercent(analysis.confidence)}): ${analysis.notes}`;
+      } catch {
+        attributes = normalizeAutoAttributes(task.componentType, undefined);
+      }
+
+      const updated = await addAggregateComponent(currentAggregate.id, {
+        componentType: task.componentType,
+        identifiedValue,
+        notes: note,
+        assembly: captureAssembly,
+        subComponent: captureSubComponent.trim() || task.label,
+        attributes
+      });
+
+      const nextCaptured = { ...capturedPhotos, [task.id]: imageDataUrl };
+      setCapturedPhotos(nextCaptured);
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+      void persistLocalPhoto(currentAggregate.id, task.id, imageDataUrl);
+      setSelectedTaskId(getNextTaskId(task.id, nextCaptured));
+      const scopeText = [captureAssembly, captureSubComponent.trim()]
+        .filter(Boolean)
+        .join(' / ');
+      setStatus(`${task.label} sparad i aggregatet${scopeText ? ` (${scopeText})` : ''}.`);
+    } catch (captureError) {
+      setError(`Kunde inte slutföra ${task.label.toLowerCase()}: ${String(captureError)}`);
     } finally {
-      setIsPreviewingImport(false);
+      setIsProcessingCapture(false);
     }
   };
 
-  const handleImport = async () => {
-    clearStatus();
+  const handleSaveAggregateChanges = async () => {
+    clearFeedback();
 
-    if (!importFile) {
-      setError('Valj en Excel- eller CSV-fil for import.');
+    if (!currentAggregate) {
+      setError('Ingen aktiv aggregatpost att uppdatera.');
       return;
     }
 
-    if (importPreviewFingerprint !== getImportFingerprint(importFile)) {
-      setError('Kor forhandsgranskning pa den valda filen innan import.');
+    if (!systemPositionId.trim()) {
+      setError('Systemposition krävs.');
       return;
     }
 
-    setIsImporting(true);
+    setIsSavingAggregate(true);
 
     try {
-      const result = await importAggregatesFile(importFile);
-      setImportResult(result);
-      setStatus(
-        `Import klar: ${result.importedAggregates} aggregat och ${result.importedComponents} komponenter.`
+      const updated = await updateAggregate(
+        currentAggregate.id,
+        buildAggregatePayload(normalizeSystemPositionId(systemPositionId))
       );
-    } catch (importError) {
-      setError(`Kunde inte importera filen: ${String(importError)}`);
+
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+      setStatus('Aggregat uppdaterat.');
+    } catch (saveError) {
+      setError(`Kunde inte uppdatera aggregat: ${String(saveError)}`);
     } finally {
-      setIsImporting(false);
+      setIsSavingAggregate(false);
     }
   };
+
+  const handleCreateAggregateManually = async () => {
+    clearFeedback();
+
+    if (currentAggregate) {
+      setStatus(`Aggregat ${currentAggregate.systemPositionId} är redan aktivt.`);
+      return;
+    }
+
+    const candidateId = normalizeSystemPositionId(systemPositionId);
+    if (!candidateId) {
+      setError('Ange Systemposition för att skapa aggregat manuellt.');
+      return;
+    }
+
+    setIsSavingAggregate(true);
+
+    try {
+      const created = await ensureAggregate(candidateId);
+      setCurrentAggregate(created);
+      syncAggregateInSearchResults(created);
+
+      const nextCaptured = {
+        ...capturedPhotos,
+        skylt: capturedPhotos.skylt || 'manual-entry'
+      };
+      setCapturedPhotos(nextCaptured);
+      setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
+      setStatus(`Aggregat ${created.systemPositionId} skapat manuellt.`);
+    } catch (manualCreateError) {
+      setError(`Kunde inte skapa aggregat manuellt: ${String(manualCreateError)}`);
+    } finally {
+      setIsSavingAggregate(false);
+    }
+  };
+
+  const handleOpenAggregateForEditing = (aggregate: AggregateRecord) => {
+    resetComponentEditing();
+    setCurrentAggregate(aggregate);
+    setStartMethod('foto');
+    setIsAddModalOpen(false);
+    setSystemPositionId(aggregate.systemPositionId);
+    setDepartment(aggregate.department ?? '');
+    setPosition(aggregate.position ?? '');
+    setAggregateNotes(aggregate.notes ?? '');
+    setCapturedPhotos({});
+    setSelectedTaskId('kilrem');
+    setMode('lagg-till');
+    setStatus(`Öppnade aggregat ${aggregate.systemPositionId} för redigering.`);
+  };
+
+  const handleManualTypeChange = (nextType: ComponentType) => {
+    const defaults = getDefaultScopeForComponentType(nextType);
+    setManualComponentType(nextType);
+    setManualAssembly(defaults.assembly);
+    setManualSubComponent(defaults.subComponent);
+    setManualValue('');
+    setManualAttributes(createEmptyAttributes(nextType));
+    setManualNotes('');
+  };
+
+  const handleManualSave = async () => {
+    clearFeedback();
+
+    if (!aggregateReady || !currentAggregate) {
+      setError('Skapa aggregatet via objektskylt först innan manuell registrering.');
+      return;
+    }
+
+    if (!manualValue.trim()) {
+      setError('Identifierat värde krävs för manuell registrering.');
+      return;
+    }
+
+    if (!manualAssembly.trim()) {
+      setError('Huvudkategori krävs för manuell registrering.');
+      return;
+    }
+
+    if (!manualSubComponent.trim()) {
+      setError('Underkategori krävs för manuell registrering.');
+      return;
+    }
+
+    const missing = COMPONENT_FIELD_CONFIG[manualComponentType]
+      .filter((field) => !manualAttributes[field.key]?.trim())
+      .map((field) => field.label);
+
+    if (missing.length > 0) {
+      setError(`Fyll i obligatoriska fält: ${missing.join(', ')}.`);
+      return;
+    }
+
+    setIsSavingManual(true);
+
+    try {
+      const updated = await addAggregateComponent(currentAggregate.id, {
+        componentType: manualComponentType,
+        identifiedValue: manualValue.trim(),
+        assembly: manualAssembly,
+        subComponent: manualSubComponent.trim(),
+        attributes: manualAttributes,
+        notes: manualNotes.trim() || 'Manuellt registrerad post.'
+      });
+
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+      setManualValue('');
+      setManualAttributes(createEmptyAttributes(manualComponentType));
+      setManualNotes('');
+      setStatus(
+        `${manualComponentType} sparad manuellt (${manualAssembly} / ${manualSubComponent.trim()}) i biblioteket.`
+      );
+    } catch (manualError) {
+      setError(`Kunde inte spara manuell post: ${String(manualError)}`);
+    } finally {
+      setIsSavingManual(false);
+    }
+  };
+
+  const handleStartEditComponent = (componentId: string) => {
+    if (!currentAggregate) {
+      return;
+    }
+
+    const component = currentAggregate.components.find((item) => item.id === componentId);
+    if (!component) {
+      return;
+    }
+
+    const componentType = isKnownComponentType(component.componentType)
+      ? component.componentType
+      : 'Kilrem';
+    const defaultScope = getDefaultScopeForComponentType(componentType);
+
+    setEditingComponentId(component.id);
+    setEditingComponentType(componentType);
+    setEditingAssembly((component.assembly as AssemblyOption | undefined) ?? defaultScope.assembly);
+    setEditingSubComponent(component.subComponent ?? defaultScope.subComponent);
+    setEditingIdentifiedValue(component.identifiedValue);
+    setEditingAttributes({
+      ...createEmptyAttributes(componentType),
+      ...component.attributes
+    });
+    setEditingNotes(component.notes ?? '');
+  };
+
+  const handleEditingTypeChange = (nextType: ComponentType) => {
+    const defaults = getDefaultScopeForComponentType(nextType);
+    setEditingComponentType(nextType);
+    setEditingAssembly(defaults.assembly);
+    setEditingSubComponent(defaults.subComponent);
+    setEditingAttributes(createEmptyAttributes(nextType));
+  };
+
+  const handleSaveComponentEdit = async () => {
+    clearFeedback();
+
+    if (!currentAggregate || !editingComponentId) {
+      setError('Ingen komponent vald för redigering.');
+      return;
+    }
+
+    if (!editingIdentifiedValue.trim()) {
+      setError('Identifierat värde krävs.');
+      return;
+    }
+
+    if (!editingAssembly.trim()) {
+      setError('Huvudkategori krävs.');
+      return;
+    }
+
+    if (!editingSubComponent.trim()) {
+      setError('Underkategori krävs.');
+      return;
+    }
+
+    const missing = COMPONENT_FIELD_CONFIG[editingComponentType]
+      .filter((field) => !editingAttributes[field.key]?.trim())
+      .map((field) => field.label);
+
+    if (missing.length > 0) {
+      setError(`Fyll i obligatoriska fält: ${missing.join(', ')}.`);
+      return;
+    }
+
+    setIsSavingComponentEdit(true);
+
+    try {
+      const updated = await updateAggregateComponent(currentAggregate.id, editingComponentId, {
+        componentType: editingComponentType,
+        identifiedValue: editingIdentifiedValue.trim(),
+        assembly: editingAssembly,
+        subComponent: editingSubComponent.trim(),
+        attributes: editingAttributes,
+        notes: editingNotes.trim() || undefined
+      });
+
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+      resetComponentEditing();
+      setStatus('Komponent uppdaterad.');
+    } catch (updateError) {
+      setError(`Kunde inte uppdatera komponent: ${String(updateError)}`);
+    } finally {
+      setIsSavingComponentEdit(false);
+    }
+  };
+
+  const handleDeleteComponent = async (componentId: string) => {
+    clearFeedback();
+
+    if (!currentAggregate) {
+      setError('Ingen aktiv aggregatpost vald.');
+      return;
+    }
+
+    const component = currentAggregate.components.find((item) => item.id === componentId);
+    if (!component) {
+      setError('Komponenten hittades inte.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Ta bort komponenten "${component.componentType} (${component.subComponent ?? 'Ingen underkategori'})"?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingComponentId(componentId);
+
+    try {
+      const updated = await deleteAggregateComponent(currentAggregate.id, componentId);
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+
+      if (editingComponentId === componentId) {
+        resetComponentEditing();
+      }
+
+      setStatus('Komponent borttagen.');
+    } catch (deleteError) {
+      setError(`Kunde inte ta bort komponent: ${String(deleteError)}`);
+    } finally {
+      setDeletingComponentId(null);
+    }
+  };
+
+  const handleDeleteAggregate = async (aggregate: AggregateRecord) => {
+    clearFeedback();
+
+    const confirmed = window.confirm(
+      `Ta bort aggregat "${aggregate.systemPositionId}" inklusive alla komponenter? Detta går inte att ångra.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingAggregateId(aggregate.id);
+
+    try {
+      await deleteAggregate(aggregate.id);
+      setSearchResults((current) => current.filter((item) => item.id !== aggregate.id));
+
+      if (currentAggregate?.id === aggregate.id) {
+        resetAggregateDraft();
+        setStartMethod(null);
+        setMode('sok');
+      }
+
+      setStatus(`Aggregat ${aggregate.systemPositionId} borttaget.`);
+    } catch (deleteError) {
+      setError(`Kunde inte ta bort aggregat: ${String(deleteError)}`);
+    } finally {
+      setDeletingAggregateId(null);
+    }
+  };
+
+  const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
+  const selectedPhotoIsPreviewable = Boolean(selectedPhoto?.startsWith('data:image/'));
+  const showAddWorkspace = Boolean(startMethod) || Boolean(currentAggregate);
+  const showManualSkyltStart =
+    selectedTask.id === 'skylt' && startMethod === 'manuell' && !aggregateReady;
 
   return (
-    <main
-      style={{
-        padding: '1.25rem',
-        maxWidth: '1200px',
-        margin: '0 auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '1rem'
-      }}
-    >
-      <header>
-        <p
-          style={{
-            margin: 0,
-            color: '#94a3b8',
-            textTransform: 'uppercase',
-            letterSpacing: '0.1em',
-            fontSize: '0.75rem'
-          }}
-        >
-          Objektbas
+    <main className={styles.pageRoot}>
+      <header className={styles.hero}>
+        <p className={styles.heroKicker}>Objektbas · Ventilation</p>
+        <h1 className={styles.heroTitle}>Enkel dokumentation med foto först</h1>
+        <p className={styles.heroText}>
+          Objektskylt är enda obligatoriska steg. Därefter kan du lägga till och
+          redigera komponenter utan dubletter i samma aggregat.
         </p>
-        <h1 style={{ marginTop: '0.25rem', marginBottom: '0.35rem' }}>
-          Ventilation - registrering och sok
-        </h1>
-        <p style={{ margin: 0, color: '#cbd5f5' }}>
-          Fota systempositionen, bekrafta AI-forslag, lagg till komponentdata och sok tidigare poster.
-        </p>
+
+        <div className={styles.modeSwitch}>
+          <button
+            onClick={openAddAggregateModal}
+            className={`${styles.modeButton} ${
+              mode === 'lagg-till' ? styles.modeButtonActive : ''
+            }`}
+          >
+            Lägg till aggregat
+          </button>
+          <button
+            onClick={() => {
+              setMode('sok');
+              void handleSearch('');
+            }}
+            className={`${styles.modeButton} ${
+              mode === 'sok' ? styles.modeButtonActive : ''
+            }`}
+          >
+            Bibliotek
+          </button>
+        </div>
       </header>
 
-      <section style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-        <button
-          onClick={() => setMode('lagg-till')}
-          style={{
-            borderRadius: '999px',
-            border: mode === 'lagg-till' ? '1px solid #60a5fa' : '1px solid rgba(148,163,184,0.3)',
-            background: mode === 'lagg-till' ? 'rgba(37,99,235,0.25)' : 'transparent',
-            color: '#f8fafc',
-            padding: '0.55rem 1rem',
-            cursor: 'pointer',
-            fontWeight: 600
-          }}
-        >
-          Lagg till
-        </button>
-        <button
-          onClick={() => {
-            setMode('sok');
-            void handleSearch('');
-          }}
-          style={{
-            borderRadius: '999px',
-            border: mode === 'sok' ? '1px solid #60a5fa' : '1px solid rgba(148,163,184,0.3)',
-            background: mode === 'sok' ? 'rgba(37,99,235,0.25)' : 'transparent',
-            color: '#f8fafc',
-            padding: '0.55rem 1rem',
-            cursor: 'pointer',
-            fontWeight: 600
-          }}
-        >
-          Sok
-        </button>
-        <button
-          onClick={() => setMode('importera')}
-          style={{
-            borderRadius: '999px',
-            border: mode === 'importera' ? '1px solid #60a5fa' : '1px solid rgba(148,163,184,0.3)',
-            background: mode === 'importera' ? 'rgba(37,99,235,0.25)' : 'transparent',
-            color: '#f8fafc',
-            padding: '0.55rem 1rem',
-            cursor: 'pointer',
-            fontWeight: 600
-          }}
-        >
-          Importera
-        </button>
-      </section>
+      {error && <p className={styles.errorBanner}>{error}</p>}
+      {status && <p className={styles.statusBanner}>{status}</p>}
 
-      {error && (
-        <p style={{ margin: 0, color: '#fb7185', fontWeight: 600 }}>
-          {error}
-        </p>
-      )}
-      {status && (
-        <p style={{ margin: 0, color: '#93c5fd' }}>
-          {status}
-        </p>
+      {isAddModalOpen && (
+        <div className={styles.modalBackdrop} onClick={() => setIsAddModalOpen(false)}>
+          <section
+            className={styles.choiceModal}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Hur vill du starta aggregatet?</h2>
+            <p>Välj ett alternativ.</p>
+            <div className={styles.choiceButtons}>
+              <button onClick={() => chooseStartMethod('foto')}>Fota</button>
+              <button onClick={() => chooseStartMethod('manuell')}>Lägg in manuellt</button>
+            </div>
+          </section>
+        </div>
       )}
 
       {mode === 'lagg-till' ? (
-        <>
-          <section
-            style={{
-              borderRadius: '1rem',
-              border: '1px solid rgba(148,163,184,0.25)',
-              background: '#0b1120',
-              padding: '1rem',
-              display: 'grid',
-              gap: '1rem',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))'
-            }}
-          >
-            <CameraCapture
-              onCapture={handleSystemCapture}
-              title='Fota systemposition'
-              subtitle='Steg 1 av 2'
-              captureLabel='Ta bild pa ID'
-            />
+        !showAddWorkspace ? (
+          <section className={styles.searchCard}>
+            <p className={styles.emptyState}>
+              Klicka på <strong>Lägg till aggregat</strong> och välj <strong>Fota</strong> eller{' '}
+              <strong>Lägg in manuellt</strong>.
+            </p>
+          </section>
+        ) : (
+          <section className={styles.addLayout}>
+          <aside className={styles.card}>
+            <div className={styles.cardHeader}>
+              <h2>Fotopunkter</h2>
+              <span className={styles.badge}>
+                {requiredDone}/{REQUIRED_TASK_IDS.length} obligatoriska
+              </span>
+            </div>
 
-            <section style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-              <h2 style={{ margin: 0, fontSize: '1rem' }}>Bekrafta systemposition</h2>
+            <div className={styles.progressTrack}>
+              <div className={styles.progressValue} style={{ width: `${completionRate}%` }} />
+            </div>
 
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                Systemposition (ID)
-                <input
-                  value={systemPositionId}
-                  onChange={(event) => setSystemPositionId(event.target.value)}
-                  placeholder='Exempel: VP-1024'
-                  style={{
-                    borderRadius: '0.7rem',
-                    border: '1px solid rgba(148,163,184,0.4)',
-                    padding: '0.65rem',
-                    background: '#020617',
-                    color: '#f8fafc'
-                  }}
-                />
-              </label>
+            <ul className={styles.taskList}>
+              {taskStatuses.map((task) => (
+                <li key={task.id}>
+                  <button
+                    className={`${styles.taskButton} ${
+                      selectedTaskId === task.id ? styles.taskButtonActive : ''
+                    } ${task.locked ? styles.taskButtonLocked : ''}`}
+                    onClick={() => handleTaskSelection(task.id)}
+                    disabled={task.locked}
+                  >
+                    <div>
+                      <strong>{task.label}</strong>
+                      <p>{task.description}</p>
+                    </div>
+                    <div className={styles.taskMeta}>
+                      {task.required && <span className={styles.required}>Obligatorisk</span>}
+                      {task.savedCount ? (
+                        <span className={styles.saved}>{task.savedCount} sparade</span>
+                      ) : task.captured ? (
+                        <span className={styles.captured}>Fotad</span>
+                      ) : (
+                        <span className={styles.pending}>Ej fotad</span>
+                      )}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </aside>
 
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                Position
-                <input
-                  value={position}
-                  onChange={(event) => setPosition(event.target.value)}
-                  placeholder='Exempel: Takplan 2'
-                  style={{
-                    borderRadius: '0.7rem',
-                    border: '1px solid rgba(148,163,184,0.4)',
-                    padding: '0.65rem',
-                    background: '#020617',
-                    color: '#f8fafc'
-                  }}
-                />
-              </label>
+            <section className={styles.workspace}>
+            <article className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2>Aktivt moment: {selectedTask.label}</h2>
+                {isProcessingCapture && <span className={styles.badge}>Bearbetar...</span>}
+              </div>
 
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                Avdelning
-                <input
-                  value={department}
-                  onChange={(event) => setDepartment(event.target.value)}
-                  placeholder='Exempel: Produktion'
-                  style={{
-                    borderRadius: '0.7rem',
-                    border: '1px solid rgba(148,163,184,0.4)',
-                    padding: '0.65rem',
-                    background: '#020617',
-                    color: '#f8fafc'
-                  }}
-                />
-              </label>
+              {selectedTask.id !== 'skylt' && (
+                <div className={styles.scopeGrid}>
+                  <label>
+                    Huvudkategori
+                    <select
+                      value={captureAssembly}
+                      onChange={(event) => setCaptureAssembly(event.target.value as AssemblyOption)}
+                    >
+                      {ASSEMBLY_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                Kommentar
-                <textarea
-                  value={aggregateNotes}
-                  onChange={(event) => setAggregateNotes(event.target.value)}
-                  placeholder='Valfri notering'
-                  style={{
-                    minHeight: '80px',
-                    borderRadius: '0.7rem',
-                    border: '1px solid rgba(148,163,184,0.4)',
-                    padding: '0.65rem',
-                    background: '#020617',
-                    color: '#f8fafc',
-                    resize: 'vertical'
-                  }}
-                />
-              </label>
-
-              {systemAnalysis && (
-                <div
-                  style={{
-                    borderRadius: '0.7rem',
-                    border: '1px solid rgba(96,165,250,0.35)',
-                    padding: '0.65rem',
-                    background: 'rgba(30,64,175,0.15)',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                  <p style={{ margin: '0 0 0.25rem' }}>
-                    AI-forslag: <strong>{systemAnalysis.systemPositionId || 'Tomt'}</strong> ({toPercent(systemAnalysis.confidence)})
-                  </p>
-                  <p style={{ margin: 0, color: '#bfdbfe' }}>{systemAnalysis.notes}</p>
+                  <label>
+                    Underkategori
+                    <input
+                      value={captureSubComponent}
+                      onChange={(event) => setCaptureSubComponent(event.target.value)}
+                      list='capture-subcomponent-presets'
+                      placeholder='Exempel: Remskiva motorsida'
+                    />
+                    <datalist id='capture-subcomponent-presets'>
+                      {captureSubComponentSuggestions.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  </label>
                 </div>
               )}
 
-              <button
-                onClick={handleCreateAggregate}
-                disabled={isAnalyzingSystem || isCreatingAggregate}
-                style={{
-                  marginTop: '0.25rem',
-                  borderRadius: '0.75rem',
-                  border: 'none',
-                  padding: '0.8rem 1rem',
-                  background: 'linear-gradient(120deg, #0ea5e9, #2563eb)',
-                  color: '#f8fafc',
-                  cursor: 'pointer',
-                  fontWeight: 700,
-                  opacity: isAnalyzingSystem || isCreatingAggregate ? 0.6 : 1
-                }}
-              >
-                {isAnalyzingSystem
-                  ? 'Analyserar bild...'
-                  : isCreatingAggregate
-                  ? 'Sparar aggregat...'
-                  : 'Spara och starta aggregat'}
-              </button>
-            </section>
-          </section>
-
-          {currentAggregate && (
-            <section
-              style={{
-                borderRadius: '1rem',
-                border: '1px solid rgba(148,163,184,0.25)',
-                background: '#0b1120',
-                padding: '1rem',
-                display: 'grid',
-                gap: '1rem',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))'
-              }}
-            >
-              <CameraCapture
-                onCapture={handleComponentCapture}
-                title={`Fota ${selectedSubCategory.label.toLowerCase()}`}
-                subtitle='Steg 2 av 2'
-                captureLabel='Ta komponentbild'
-              />
-
-              <section style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                <h2 style={{ margin: 0, fontSize: '1rem' }}>
-                  Lagg till komponent pa {currentAggregate.systemPositionId}
-                </h2>
-
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                  Huvudkategori
-                  <select
-                    value={mainCategory}
-                    onChange={(event) => {
-                      const nextMain = event.target.value as MainCategory;
-                      const firstSubCategory = SUBCATEGORY_BY_MAIN[nextMain][0];
-                      setMainCategory(nextMain);
-                      setComponentType(firstSubCategory.componentType);
-                      setComponentValue('');
-                      setMultiValueInput('');
-                      setComponentAttributes(
-                        createEmptyAttributes(firstSubCategory.componentType)
-                      );
-                      setComponentNotes('');
-                      setComponentAnalysis(null);
-                    }}
-                    style={{
-                      borderRadius: '0.7rem',
-                      border: '1px solid rgba(148,163,184,0.4)',
-                      padding: '0.65rem',
-                      background: '#020617',
-                      color: '#f8fafc'
-                    }}
+              {showManualSkyltStart ? (
+                <div className={styles.libraryHint}>
+                  <strong>Manuell start</strong>
+                  <p>Fyll i Systemposition i aggregatramen och skapa aggregatet manuellt.</p>
+                  <button
+                    className={styles.manualSaveButton}
+                    onClick={() => void handleCreateAggregateManually()}
+                    disabled={isSavingAggregate || isProcessingCapture}
                   >
-                    {MAIN_CATEGORY_OPTIONS.map((option) => (
+                    {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
+                  </button>
+                </div>
+              ) : (
+                <CameraCapture
+                  onCapture={handleCapture}
+                  title={`Fotografera ${selectedTask.label.toLowerCase()}`}
+                  subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
+                  captureLabel='Ta foto med enhet'
+                  uploadLabel='Ladda upp foto'
+                helperText={
+                  selectedTask.id === 'skylt'
+                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat. Bilden sparas lokalt på enheten.'
+                    : 'Sparas i befintligt aggregat med vald huvudkategori/underkategori. Flera komponenter av samma typ stöds. Bilden sparas lokalt på enheten.'
+                }
+                  disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
+                />
+              )}
+
+              {selectedPhoto && selectedPhotoIsPreviewable && (
+                <div className={styles.previewWrap}>
+                  <p>Senaste bild: {selectedTask.label}</p>
+                  <img src={selectedPhoto} alt={`Foto ${selectedTask.label}`} />
+                </div>
+              )}
+            </article>
+
+            <article className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2>Aggregatram</h2>
+                <span className={styles.aggregatePill}>
+                  {currentAggregate
+                    ? `Aktivt ID: ${currentAggregate.systemPositionId}`
+                    : 'Skapas efter objektskylt'}
+                </span>
+              </div>
+
+              <div className={styles.quickForm}>
+                <label>
+                  Systemposition
+                  <input
+                    value={systemPositionId}
+                    onChange={(event) => setSystemPositionId(event.target.value)}
+                    placeholder='Exempel: VP-1024'
+                  />
+                </label>
+
+                <label>
+                  Avdelning
+                  <input
+                    value={department}
+                    onChange={(event) => setDepartment(event.target.value)}
+                    list='department-presets'
+                    placeholder='Exempel: Produktion'
+                  />
+                  <datalist id='department-presets'>
+                    {DEPARTMENT_PRESETS.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </label>
+
+                <label>
+                  Position
+                  <input
+                    value={position}
+                    onChange={(event) => setPosition(event.target.value)}
+                    placeholder='Exempel: Takplan 2, AHU-rum'
+                  />
+                </label>
+
+                <label>
+                  Notering
+                  <textarea
+                    value={aggregateNotes}
+                    onChange={(event) => setAggregateNotes(event.target.value)}
+                    placeholder='Valfri kontext för nästa tekniker.'
+                  />
+                </label>
+              </div>
+
+              <div className={styles.aggregateActions}>
+                <button
+                  className={styles.manualSaveButton}
+                  onClick={handleSaveAggregateChanges}
+                  disabled={!currentAggregate || isSavingAggregate}
+                >
+                  {isSavingAggregate ? 'Sparar...' : 'Spara ändringar i aggregat'}
+                </button>
+                <button
+                  className={styles.dangerButton}
+                  onClick={() => currentAggregate && void handleDeleteAggregate(currentAggregate)}
+                  disabled={!currentAggregate || deletingAggregateId === currentAggregate.id}
+                >
+                  {deletingAggregateId === currentAggregate?.id
+                    ? 'Tar bort aggregat...'
+                    : 'Ta bort aggregat'}
+                </button>
+              </div>
+
+              <div className={styles.libraryHint}>
+                <strong>Regel i flödet:</strong>
+                <p>
+                  Endast objektskylt är obligatorisk. När aggregatet finns kan du
+                  återkomma senare, uppdatera metadata och lägga till/ändra komponenter.
+                </p>
+              </div>
+            </article>
+
+            <article className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2>Manuell registrering (fallback)</h2>
+                <span className={styles.badge}>Använd vid svårläst bild</span>
+              </div>
+
+              <div className={styles.manualGrid}>
+                <label>
+                  Komponenttyp
+                  <select
+                    value={manualComponentType}
+                    onChange={(event) =>
+                      handleManualTypeChange(event.target.value as ComponentType)
+                    }
+                  >
+                    {COMPONENT_OPTIONS.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -685,490 +1171,338 @@ export default function HomePage() {
                   </select>
                 </label>
 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                  Underkategori
+                <label>
+                  Huvudkategori
                   <select
-                    value={selectedComponentType}
-                    onChange={(event) => {
-                      const next = event.target.value as ComponentType;
-                      setComponentType(next);
-                      setComponentValue('');
-                      setMultiValueInput('');
-                      setComponentAttributes(createEmptyAttributes(next));
-                      setComponentNotes('');
-                      setComponentAnalysis(null);
-                    }}
-                    style={{
-                      borderRadius: '0.7rem',
-                      border: '1px solid rgba(148,163,184,0.4)',
-                      padding: '0.65rem',
-                      background: '#020617',
-                      color: '#f8fafc'
-                    }}
+                    value={manualAssembly}
+                    onChange={(event) => setManualAssembly(event.target.value as AssemblyOption)}
                   >
-                    {subCategoryOptions.map((option) => (
-                      <option key={`${mainCategory}-${option.label}`} value={option.componentType}>
-                        {option.label}
+                    {ASSEMBLY_OPTIONS.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
                       </option>
                     ))}
                   </select>
                 </label>
 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                  {selectedComponentType === '\u00d6vrigt' ? 'Notering' : 'Identifierat varde'}
+                <label>
+                  Underkategori
                   <input
-                    value={componentValue}
-                    onChange={(event) => setComponentValue(event.target.value)}
-                    placeholder={
-                      selectedComponentType === '\u00d6vrigt'
-                        ? 'Skriv en notering'
-                        : 'Ex: SPA 1180, C3-lager 6205, F7-595x595'
-                    }
-                    style={{
-                      borderRadius: '0.7rem',
-                      border: '1px solid rgba(148,163,184,0.4)',
-                      padding: '0.65rem',
-                      background: '#020617',
-                      color: '#f8fafc'
-                    }}
+                    value={manualSubComponent}
+                    onChange={(event) => setManualSubComponent(event.target.value)}
+                    list='manual-subcomponent-presets'
+                    placeholder='Exempel: Remskiva fläktsida'
+                  />
+                  <datalist id='manual-subcomponent-presets'>
+                    {manualSubComponentSuggestions.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </label>
+
+                <label>
+                  Identifierat värde
+                  <input
+                    value={manualValue}
+                    onChange={(event) => setManualValue(event.target.value)}
+                    placeholder='Exempel: SPA 1180, 6205-2RS C3'
                   />
                 </label>
 
-                {isMultiValueType && (
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                    Fler poster (en per rad)
-                    <textarea
-                      value={multiValueInput}
-                      onChange={(event) => setMultiValueInput(event.target.value)}
-                      placeholder='Ex: Filter 2\\nFilter 3'
-                      style={{
-                        minHeight: '80px',
-                        borderRadius: '0.7rem',
-                        border: '1px solid rgba(148,163,184,0.4)',
-                        padding: '0.65rem',
-                        background: '#020617',
-                        color: '#f8fafc',
-                        resize: 'vertical'
-                      }}
-                    />
-                  </label>
-                )}
-
-                {COMPONENT_FIELD_CONFIG[selectedComponentType].map((field) => (
-                  <label
-                    key={field.key}
-                    style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}
-                  >
+                {COMPONENT_FIELD_CONFIG[manualComponentType].map((field) => (
+                  <label key={field.key}>
                     {field.label}
                     <input
-                      value={componentAttributes[field.key] ?? ''}
+                      value={manualAttributes[field.key] ?? ''}
                       onChange={(event) =>
-                        setComponentAttributes((current) => ({
+                        setManualAttributes((current) => ({
                           ...current,
                           [field.key]: event.target.value
                         }))
                       }
                       placeholder={field.placeholder}
-                      style={{
-                        borderRadius: '0.7rem',
-                        border: '1px solid rgba(148,163,184,0.4)',
-                        padding: '0.65rem',
-                        background: '#020617',
-                        color: '#f8fafc'
-                      }}
                     />
                   </label>
                 ))}
 
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
+                <label className={styles.fullRow}>
                   Notering
                   <textarea
-                    value={componentNotes}
-                    onChange={(event) => setComponentNotes(event.target.value)}
-                    placeholder='Valfri notering om komponentens skick eller byte'
-                    style={{
-                      minHeight: '80px',
-                      borderRadius: '0.7rem',
-                      border: '1px solid rgba(148,163,184,0.4)',
-                      padding: '0.65rem',
-                      background: '#020617',
-                      color: '#f8fafc',
-                      resize: 'vertical'
-                    }}
+                    value={manualNotes}
+                    onChange={(event) => setManualNotes(event.target.value)}
+                    placeholder='Exempel: OCR misslyckades, värde kontrollerat manuellt.'
                   />
                 </label>
+              </div>
 
-                {componentAnalysis && (
-                  <div
-                    style={{
-                      borderRadius: '0.7rem',
-                      border: '1px solid rgba(45,212,191,0.35)',
-                      padding: '0.65rem',
-                      background: 'rgba(13,148,136,0.12)',
-                      fontSize: '0.9rem'
-                    }}
-                  >
-                    <p style={{ margin: '0 0 0.25rem' }}>
-                      AI-forslag ({componentAnalysis.componentType}):{' '}
-                      <strong>{componentAnalysis.identifiedValue}</strong> ({toPercent(componentAnalysis.confidence)})
-                    </p>
-                    <p style={{ margin: 0, color: '#99f6e4' }}>{componentAnalysis.notes}</p>
-                  </div>
-                )}
+              <button
+                className={styles.manualSaveButton}
+                onClick={handleManualSave}
+                disabled={!aggregateReady || isSavingManual}
+              >
+                {isSavingManual ? 'Sparar...' : 'Spara manuell post'}
+              </button>
+            </article>
 
-                <button
-                  onClick={handleSaveComponent}
-                  disabled={isAnalyzingComponent || isSavingComponent}
-                  style={{
-                    marginTop: '0.25rem',
-                    borderRadius: '0.75rem',
-                    border: 'none',
-                    padding: '0.8rem 1rem',
-                    background: 'linear-gradient(120deg, #14b8a6, #0ea5e9)',
-                    color: '#f8fafc',
-                    cursor: 'pointer',
-                    fontWeight: 700,
-                    opacity: isAnalyzingComponent || isSavingComponent ? 0.6 : 1
-                  }}
-                >
-                  {isAnalyzingComponent
-                    ? 'Analyserar komponentbild...'
-                    : isSavingComponent
-                    ? 'Sparar komponent...'
-                    : 'Spara komponent'}
-                </button>
+            <article className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2>Sparade komponenter</h2>
+                <span className={styles.badge}>
+                  {currentAggregate?.components.length ?? 0} komponentposter
+                </span>
+              </div>
 
-                <section
-                  style={{
-                    marginTop: '0.5rem',
-                    borderTop: '1px solid rgba(148,163,184,0.2)',
-                    paddingTop: '0.75rem'
-                  }}
-                >
-                  <p style={{ margin: '0 0 0.35rem', color: '#94a3b8', fontSize: '0.85rem' }}>
-                    Sparade komponenter ({currentAggregate.components.length})
-                  </p>
+              {!!currentAggregate?.components.length ? (
+                <ul className={styles.componentList}>
+                  {currentAggregate.components.map((component) => {
+                    const isEditing = editingComponentId === component.id;
+                    const attributeSummary = Object.entries(component.attributes)
+                      .filter(([, value]) => value?.trim())
+                      .map(([key, value]) => `${key}: ${value}`)
+                      .join(' · ');
 
-                  <ul
-                    style={{
-                      listStyle: 'none',
-                      margin: 0,
-                      padding: 0,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '0.4rem'
-                    }}
-                  >
-                    {currentAggregate.components.map((component) => (
-                      <li
-                        key={component.id}
-                        style={{
-                          borderRadius: '0.65rem',
-                          border: '1px solid rgba(148,163,184,0.2)',
-                          padding: '0.55rem',
-                          background: '#020617'
-                        }}
-                      >
-                        <p style={{ margin: '0 0 0.2rem' }}>
-                          <strong>
-                            {component.assembly || 'Okand'} /{' '}
-                            {component.subComponent || component.componentType}
-                          </strong>
-                          : {component.identifiedValue}
-                        </p>
-                        {Object.keys(component.attributes || {}).length > 0 && (
-                          <p style={{ margin: '0 0 0.2rem', color: '#93c5fd', fontSize: '0.8rem' }}>
-                            {Object.entries(component.attributes)
-                              .map(([key, value]) => `${key}: ${value}`)
-                              .join(' | ')}
+                    return (
+                      <li key={component.id}>
+                        <div className={styles.componentItemHeader}>
+                          <p>
+                            <strong>{component.componentType}</strong>
+                            {component.assembly ? ` · ${component.assembly}` : ''}
+                            {component.subComponent ? ` / ${component.subComponent}` : ''}: {component.identifiedValue}
                           </p>
-                        )}
-                        {component.notes && (
-                          <p style={{ margin: 0, color: '#cbd5f5', fontSize: '0.85rem' }}>
-                            {component.notes}
-                          </p>
+
+                          <div className={styles.componentItemActions}>
+                            <button
+                              className={styles.inlineButton}
+                              onClick={() => handleStartEditComponent(component.id)}
+                              disabled={isEditing || deletingComponentId === component.id || isSavingComponentEdit}
+                            >
+                              Redigera
+                            </button>
+                            <button
+                              className={styles.inlineDangerButton}
+                              onClick={() => void handleDeleteComponent(component.id)}
+                              disabled={deletingComponentId === component.id || isSavingComponentEdit}
+                            >
+                              {deletingComponentId === component.id ? 'Tar bort...' : 'Ta bort'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isEditing ? (
+                          <div className={styles.componentEditGrid}>
+                            <label>
+                              Komponenttyp
+                              <select
+                                value={editingComponentType}
+                                onChange={(event) =>
+                                  handleEditingTypeChange(event.target.value as ComponentType)
+                                }
+                              >
+                                {COMPONENT_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label>
+                              Huvudkategori
+                              <select
+                                value={editingAssembly}
+                                onChange={(event) =>
+                                  setEditingAssembly(event.target.value as AssemblyOption)
+                                }
+                              >
+                                {ASSEMBLY_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label>
+                              Underkategori
+                              <input
+                                value={editingSubComponent}
+                                onChange={(event) => setEditingSubComponent(event.target.value)}
+                                list={`editing-subcomponent-${component.id}`}
+                                placeholder='Exempel: Remskiva motorsida'
+                              />
+                              <datalist id={`editing-subcomponent-${component.id}`}>
+                                {editingSubComponentSuggestions.map((option) => (
+                                  <option key={option} value={option} />
+                                ))}
+                              </datalist>
+                            </label>
+
+                            <label>
+                              Identifierat värde
+                              <input
+                                value={editingIdentifiedValue}
+                                onChange={(event) => setEditingIdentifiedValue(event.target.value)}
+                                placeholder='Exempel: SPA 1180, 6205-2RS C3'
+                              />
+                            </label>
+
+                            {COMPONENT_FIELD_CONFIG[editingComponentType].map((field) => (
+                              <label key={field.key}>
+                                {field.label}
+                                <input
+                                  value={editingAttributes[field.key] ?? ''}
+                                  onChange={(event) =>
+                                    setEditingAttributes((current) => ({
+                                      ...current,
+                                      [field.key]: event.target.value
+                                    }))
+                                  }
+                                  placeholder={field.placeholder}
+                                />
+                              </label>
+                            ))}
+
+                            <label className={styles.fullRow}>
+                              Notering
+                              <textarea
+                                value={editingNotes}
+                                onChange={(event) => setEditingNotes(event.target.value)}
+                                placeholder='Valfri notering för komponenten.'
+                              />
+                            </label>
+
+                            <div className={styles.inlineEditActions}>
+                              <button
+                                className={styles.manualSaveButton}
+                                onClick={() => void handleSaveComponentEdit()}
+                                disabled={isSavingComponentEdit || deletingComponentId === component.id}
+                              >
+                                {isSavingComponentEdit ? 'Sparar...' : 'Spara ändring'}
+                              </button>
+                              <button
+                                className={styles.inlineButton}
+                                onClick={resetComponentEditing}
+                                disabled={isSavingComponentEdit}
+                              >
+                                Avbryt
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <p>{attributeSummary || 'Inga attribut angivna.'}</p>
+                            {component.notes && <p>Notering: {component.notes}</p>}
+                          </>
                         )}
                       </li>
-                    ))}
-                  </ul>
-                </section>
-              </section>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className={styles.emptyState}>
+                  Inga komponenter sparade ännu. Börja med objektskylt, fortsätt sedan
+                  med foto eller manuell registrering.
+                </p>
+              )}
+            </article>
             </section>
-          )}
-        </>
-      ) : mode === 'sok' ? (
-        <section
-          style={{
-            borderRadius: '1rem',
-            border: '1px solid rgba(148,163,184,0.25)',
-            background: '#0b1120',
-            padding: '1rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.75rem'
-          }}
-        >
-          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+          </section>
+        )
+      ) : (
+        <section className={styles.searchCard}>
+          <div className={styles.searchControls}>
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder='Sok pa systemposition, avdelning, position eller komponent'
-              style={{
-                flex: 1,
-                minWidth: '220px',
-                borderRadius: '0.7rem',
-                border: '1px solid rgba(148,163,184,0.4)',
-                padding: '0.7rem',
-                background: '#020617',
-                color: '#f8fafc'
-              }}
+              placeholder='Sök på systemposition, komponent eller fritext'
             />
-            <button
-              onClick={() => void handleSearch()}
-              disabled={isSearching}
-              style={{
-                borderRadius: '0.7rem',
-                border: 'none',
-                padding: '0.7rem 1rem',
-                background: 'linear-gradient(120deg, #38bdf8, #6366f1)',
-                color: '#f8fafc',
-                cursor: 'pointer',
-                fontWeight: 700,
-                opacity: isSearching ? 0.6 : 1
-              }}
-            >
-              {isSearching ? 'Soker...' : 'Sok'}
+            <button onClick={() => void handleSearch()} disabled={isSearching}>
+              {isSearching ? 'Söker...' : 'Sök'}
             </button>
           </div>
 
-          <ul
-            style={{
-              listStyle: 'none',
-              margin: 0,
-              padding: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.7rem'
-            }}
-          >
-            {searchResults.map((aggregate) => (
-              <li
-                key={aggregate.id}
-                style={{
-                  borderRadius: '0.8rem',
-                  border: '1px solid rgba(148,163,184,0.25)',
-                  padding: '0.8rem',
-                  background: '#020617'
-                }}
+          <div className={styles.libraryToolbar}>
+            <label>
+              Avdelning
+              <select
+                value={departmentFilter}
+                onChange={(event) => setDepartmentFilter(event.target.value)}
               >
-                <p style={{ margin: '0 0 0.25rem' }}>
+                {departmentOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option === 'alla' ? 'Alla avdelningar' : option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Sortering
+              <select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value as SortOrder)}
+              >
+                <option value='nyast'>Senast uppdaterad</option>
+                <option value='aldst'>Äldst först</option>
+              </select>
+            </label>
+          </div>
+
+          <ul className={styles.searchResultList}>
+            {filteredSearchResults.map((aggregate) => (
+              <li key={aggregate.id}>
+                <header>
                   <strong>{aggregate.systemPositionId}</strong>
-                  {' - '}
-                  {aggregate.position || 'Ingen position angiven'}
-                </p>
-                <p style={{ margin: '0 0 0.4rem', color: '#94a3b8', fontSize: '0.85rem' }}>
-                  Avdelning: {aggregate.department || 'Ej satt'} | Komponenter: {aggregate.components.length} | Uppdaterad:{' '}
-                  {new Date(aggregate.updatedAt).toLocaleString('sv-SE')}
+                  <span>{new Date(aggregate.updatedAt).toLocaleString('sv-SE')}</span>
+                </header>
+                <p>
+                  Avdelning: {aggregate.department || 'Ej satt'} · Position:{' '}
+                  {aggregate.position || 'Ej satt'}
                 </p>
 
                 {!!aggregate.components.length && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                    {aggregate.components.slice(0, 6).map((component) => (
-                      <span
-                        key={component.id}
-                        style={{
-                          fontSize: '0.75rem',
-                          borderRadius: '999px',
-                          padding: '0.2rem 0.55rem',
-                          background: 'rgba(14,165,233,0.15)',
-                          color: '#7dd3fc'
-                        }}
-                      >
-                        {(component.assembly || component.componentType) +
-                          ' / ' +
-                          (component.subComponent || component.componentType)}
-                        : {component.identifiedValue}
-                        {Object.keys(component.attributes || {}).length > 0
-                          ? ` (${Object.entries(component.attributes)
-                              .slice(0, 1)
-                              .map((entry) => entry[1])
-                              .join(', ')})`
-                          : ''}
-                      </span>
-                    ))}
+                  <div className={styles.componentOverview}>
+                    <p className={styles.componentOverviewTitle}>
+                      Komponentöversikt ({aggregate.components.length})
+                    </p>
+                    <ul className={styles.componentOverviewList}>
+                      {aggregate.components.map((component) => (
+                        <li key={component.id}>
+                          <strong>{component.componentType}</strong>
+                          <span>
+                            {component.assembly ? `${component.assembly}` : 'Ingen huvudkategori'}
+                            {component.subComponent ? ` / ${component.subComponent}` : ''}
+                          </span>
+                          <span>{component.identifiedValue}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
+
+                <div className={styles.resultActions}>
+                  <button
+                    className={styles.openButton}
+                    onClick={() => handleOpenAggregateForEditing(aggregate)}
+                  >
+                    Öppna för redigering
+                  </button>
+                  <button
+                    className={styles.deleteButton}
+                    onClick={() => void handleDeleteAggregate(aggregate)}
+                    disabled={deletingAggregateId === aggregate.id}
+                  >
+                    {deletingAggregateId === aggregate.id ? 'Tar bort...' : 'Ta bort aggregat'}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
 
-          {!isSearching && searchResults.length === 0 && (
-            <p style={{ margin: 0, color: '#94a3b8' }}>Inga sparade poster hittades.</p>
-          )}
-        </section>
-      ) : (
-        <section
-          style={{
-            borderRadius: '1rem',
-            border: '1px solid rgba(148,163,184,0.25)',
-            background: '#0b1120',
-            padding: '1rem',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.9rem'
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: '1rem' }}>Importera aggregat fran Excel</h2>
-          <p style={{ margin: 0, color: '#94a3b8', fontSize: '0.9rem' }}>
-            Stod for `.xlsx`, `.xls` och `.csv`. En rad kan innehalla ett aggregat och valfri komponent.
-            Anvand kolumner som `systemPositionId`, `componentType`, `identifiedValue` och `attr_*` for attribut.
-            Kor forst `Forhandsgranska`, och importera sedan.
-          </p>
-
-          <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap', alignItems: 'center' }}>
-            <input
-              type='file'
-              accept='.xlsx,.xls,.csv'
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                setImportFile(file);
-                setImportPreview(null);
-                setImportResult(null);
-                setImportPreviewFingerprint(null);
-              }}
-              style={{
-                borderRadius: '0.7rem',
-                border: '1px solid rgba(148,163,184,0.4)',
-                padding: '0.55rem',
-                background: '#020617',
-                color: '#f8fafc'
-              }}
-            />
-            <button
-              onClick={handlePreviewImport}
-              disabled={isPreviewingImport}
-              style={{
-                borderRadius: '0.7rem',
-                border: 'none',
-                padding: '0.65rem 1rem',
-                background: 'linear-gradient(120deg, #14b8a6, #0ea5e9)',
-                color: '#f8fafc',
-                cursor: 'pointer',
-                fontWeight: 700,
-                opacity: isPreviewingImport ? 0.6 : 1
-              }}
-            >
-              {isPreviewingImport ? 'Forhandsgranskar...' : 'Forhandsgranska'}
-            </button>
-            <button
-              onClick={handleImport}
-              disabled={
-                isImporting ||
-                isPreviewingImport ||
-                !importFile ||
-                importPreviewFingerprint !==
-                  (importFile ? getImportFingerprint(importFile) : null)
-              }
-              style={{
-                borderRadius: '0.7rem',
-                border: 'none',
-                padding: '0.65rem 1rem',
-                background: 'linear-gradient(120deg, #0ea5e9, #2563eb)',
-                color: '#f8fafc',
-                cursor: 'pointer',
-                fontWeight: 700,
-                opacity:
-                  isImporting ||
-                  isPreviewingImport ||
-                  !importFile ||
-                  importPreviewFingerprint !==
-                    (importFile ? getImportFingerprint(importFile) : null)
-                    ? 0.6
-                    : 1
-              }}
-            >
-              {isImporting ? 'Importerar...' : 'Importera fil'}
-            </button>
-            <button
-              onClick={handleDownloadTemplate}
-              style={{
-                borderRadius: '0.7rem',
-                border: '1px solid rgba(148,163,184,0.6)',
-                padding: '0.65rem 1rem',
-                background: 'transparent',
-                color: '#f8fafc',
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
-            >
-              Ladda ner mall (CSV)
-            </button>
-          </div>
-
-          {importFile && (
-            <p style={{ margin: 0, color: '#cbd5f5', fontSize: '0.85rem' }}>
-              Vald fil: <strong>{importFile.name}</strong>
+          {!isSearching && filteredSearchResults.length === 0 && (
+            <p className={styles.emptyState}>
+              Inga träffar ännu. Registrera objekt via fotoflödet så byggs biblioteket upp.
             </p>
-          )}
-
-          {importPreview && (
-            <section
-              style={{
-                borderRadius: '0.8rem',
-                border: '1px solid rgba(148,163,184,0.3)',
-                background: '#020617',
-                padding: '0.75rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.45rem'
-              }}
-            >
-              <p style={{ margin: 0, color: '#cbd5f5' }}>
-                Forhandsvisning: rader {importPreview.totalRows}, aggregat {importPreview.parsedAggregates}, komponenter {importPreview.parsedComponents}, hoppade over {importPreview.skippedRows}
-              </p>
-              {importPreview.previewAggregates.length > 0 && (
-                <ul style={{ margin: 0, paddingLeft: '1rem', color: '#93c5fd' }}>
-                  {importPreview.previewAggregates.slice(0, 8).map((aggregate) => (
-                    <li key={aggregate.systemPositionId}>
-                      <strong>{aggregate.systemPositionId}</strong>
-                      {aggregate.position ? ` (${aggregate.position})` : ''} - {aggregate.componentsCount} komponent(er)
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {importPreview.warnings.length > 0 && (
-                <ul style={{ margin: 0, paddingLeft: '1rem', color: '#fbbf24' }}>
-                  {importPreview.warnings.slice(0, 10).map((warning, index) => (
-                    <li key={`${warning}-${index}`}>{warning}</li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
-
-          {importResult && (
-            <section
-              style={{
-                borderRadius: '0.8rem',
-                border: '1px solid rgba(148,163,184,0.3)',
-                background: '#020617',
-                padding: '0.75rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.45rem'
-              }}
-            >
-              <p style={{ margin: 0, color: '#cbd5f5' }}>
-                Rader: {importResult.totalRows} | Aggregat: {importResult.importedAggregates} ({importResult.createdAggregates} skapade, {importResult.updatedAggregates} uppdaterade) | Komponenter: {importResult.importedComponents} | Hoppade over: {importResult.skippedRows}
-              </p>
-              {importResult.warnings.length > 0 && (
-                <ul style={{ margin: 0, paddingLeft: '1rem', color: '#fbbf24' }}>
-                  {importResult.warnings.slice(0, 10).map((warning, index) => (
-                    <li key={`${warning}-${index}`}>{warning}</li>
-                  ))}
-                </ul>
-              )}
-            </section>
           )}
         </section>
       )}
