@@ -1,19 +1,14 @@
-﻿.pageRoot {
+.pageRoot {
   --bg-1: #0a1015;
   --bg-2: #101b21;
-  --bg-3: #152a33;
   --line: rgba(148, 163, 184, 0.28);
-  --line-strong: rgba(125, 211, 252, 0.4);
+  --line-strong: rgba(125, 211, 252, 0.42);
   --text: #e8edf2;
   --muted: #9fb0bf;
-  --brand: #ff8a1f;
-  --brand-2: #14b8a6;
-  --danger: #fb7185;
-  --ok: #34d399;
 
   min-height: 100vh;
   padding: clamp(0.9rem, 1.6vw, 1.5rem);
-  max-width: 1350px;
+  max-width: 1360px;
   margin: 0 auto;
   color: var(--text);
   display: flex;
@@ -42,14 +37,14 @@
 
 .heroTitle {
   margin: 0.35rem 0 0.35rem;
-  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-size: clamp(1.5rem, 4vw, 2.4rem);
   line-height: 1.06;
 }
 
 .heroText {
   margin: 0;
   color: var(--muted);
-  max-width: 65ch;
+  max-width: 72ch;
 }
 
 .modeSwitch {
@@ -102,7 +97,7 @@
 .addLayout {
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(270px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   align-items: start;
 }
 
@@ -115,8 +110,7 @@
 .card {
   border: 1px solid var(--line);
   border-radius: 1rem;
-  background:
-    linear-gradient(170deg, rgba(21, 30, 39, 0.92), rgba(12, 18, 24, 0.94));
+  background: linear-gradient(170deg, rgba(21, 30, 39, 0.92), rgba(12, 18, 24, 0.94));
   padding: 1rem;
   animation: fadeRise 0.55s ease both;
 }
@@ -195,6 +189,16 @@
   background: linear-gradient(130deg, rgba(20, 184, 166, 0.1), rgba(2, 6, 23, 0.88));
 }
 
+.taskButtonLocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.taskButtonLocked:hover {
+  transform: none;
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
 .taskButton strong {
   display: block;
   margin-bottom: 0.2rem;
@@ -216,8 +220,7 @@
 .required,
 .saved,
 .captured,
-.pending,
-.blocked {
+.pending {
   font-size: 0.67rem;
   border-radius: 999px;
   padding: 0.12rem 0.45rem;
@@ -249,12 +252,6 @@
   color: #cbd5e1;
 }
 
-.blocked {
-  background: rgba(251, 113, 133, 0.15);
-  border-color: rgba(251, 113, 133, 0.5);
-  color: #fda4af;
-}
-
 .previewWrap {
   margin-top: 0.85rem;
   border: 1px dashed rgba(148, 163, 184, 0.35);
@@ -275,13 +272,14 @@
   border: 1px solid rgba(148, 163, 184, 0.25);
 }
 
-.formGrid {
+.quickForm {
   display: grid;
   gap: 0.65rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.formGrid label {
+.quickForm label,
+.libraryToolbar label {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
@@ -289,10 +287,17 @@
   color: #dbe5ef;
 }
 
-.formGrid input,
-.formGrid textarea,
-.formGrid select,
-.searchControls input {
+.quickForm label:last-child {
+  grid-column: 1 / -1;
+}
+
+.quickForm input,
+.quickForm textarea,
+.libraryToolbar select,
+.searchControls input,
+.searchControls button,
+.libraryToolbar input,
+.libraryToolbar button {
   border-radius: 0.65rem;
   border: 1px solid rgba(148, 163, 184, 0.36);
   background: rgba(2, 6, 23, 0.85);
@@ -301,56 +306,77 @@
   font-size: 0.94rem;
 }
 
-.formGrid textarea {
-  min-height: 95px;
+.quickForm textarea {
+  min-height: 88px;
   resize: vertical;
 }
 
-.fullWidth {
+.manualGrid {
+  display: grid;
+  gap: 0.65rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.manualGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.86rem;
+  color: #dbe5ef;
+}
+
+.manualGrid input,
+.manualGrid textarea,
+.manualGrid select {
+  border-radius: 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  background: rgba(2, 6, 23, 0.85);
+  color: #f8fafc;
+  padding: 0.65rem;
+  font-size: 0.94rem;
+}
+
+.manualGrid textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.fullRow {
   grid-column: 1 / -1;
 }
 
-.aiBox,
-.aiBoxSuccess {
-  border: 1px solid rgba(96, 165, 250, 0.4);
-  border-radius: 0.75rem;
-  padding: 0.65rem;
-  margin-top: 0.75rem;
-  background: rgba(30, 64, 175, 0.2);
-}
-
-.aiBoxSuccess {
-  border-color: rgba(20, 184, 166, 0.5);
-  background: rgba(15, 118, 110, 0.2);
-}
-
-.aiBox p,
-.aiBoxSuccess p {
-  margin: 0;
-  color: #dbeafe;
-}
-
-.aiBox p + p,
-.aiBoxSuccess p + p {
-  margin-top: 0.35rem;
-}
-
-.primaryAction,
-.searchControls button {
+.manualSaveButton {
   margin-top: 0.85rem;
   border: 0;
   border-radius: 0.75rem;
   padding: 0.8rem 1rem;
   color: #081019;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
-  background: linear-gradient(130deg, #fb923c, #22d3ee);
+  background: linear-gradient(120deg, #fb923c, #22d3ee);
 }
 
-.primaryAction:disabled,
-.searchControls button:disabled {
+.manualSaveButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.libraryHint {
+  margin-top: 0.75rem;
+  border: 1px solid rgba(20, 184, 166, 0.32);
+  border-radius: 0.75rem;
+  background: rgba(15, 118, 110, 0.16);
+  padding: 0.65rem;
+}
+
+.libraryHint strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.libraryHint p {
+  margin: 0;
+  color: #cdeaf2;
 }
 
 .aggregatePill {
@@ -364,7 +390,7 @@
 
 .componentList {
   list-style: none;
-  margin: 0.85rem 0 0;
+  margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -405,12 +431,27 @@
 
 .searchControls input {
   flex: 1;
-  min-width: 220px;
+  min-width: 240px;
 }
 
 .searchControls button {
-  margin-top: 0;
-  min-width: 110px;
+  border: 0;
+  cursor: pointer;
+  font-weight: 700;
+  background: linear-gradient(120deg, #fb923c, #22d3ee);
+  color: #081019;
+}
+
+.searchControls button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.libraryToolbar {
+  margin-top: 0.7rem;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .searchResultList {
@@ -463,7 +504,7 @@
   color: var(--muted);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1080px) {
   .addLayout {
     grid-template-columns: 1fr;
   }
@@ -473,14 +514,22 @@
   }
 }
 
-@media (max-width: 640px) {
-  .card,
+@media (max-width: 680px) {
   .hero,
+  .card,
   .searchCard {
     padding: 0.85rem;
   }
 
-  .formGrid {
+  .quickForm {
+    grid-template-columns: 1fr;
+  }
+
+  .manualGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .libraryToolbar {
     grid-template-columns: 1fr;
   }
 

@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { CameraCapture } from '@/components/CameraCapture';
 import {
@@ -13,13 +13,7 @@ import {
   COMPONENT_OPTIONS,
   createEmptyAttributes
 } from '@/lib/componentSchema';
-import {
-  AggregateRecord,
-  AppMode,
-  ComponentAnalysis,
-  ComponentType,
-  SystemPositionAnalysis
-} from '@/lib/types';
+import { AggregateRecord, AppMode, ComponentType } from '@/lib/types';
 import { useMemo, useState } from 'react';
 import styles from './page.module.css';
 
@@ -31,18 +25,22 @@ type CaptureTask = {
   required?: boolean;
 };
 
+type SortOrder = 'nyast' | 'aldst';
+
+const DEPARTMENT_PRESETS = [
+  'Produktion',
+  'Underhåll',
+  'Energi',
+  'Logistik',
+  'Verkstad',
+  'Kvalitet'
+];
+
 const CAPTURE_TASKS: CaptureTask[] = [
   {
     id: 'skylt',
-    label: 'Objektsskylt',
-    description: 'System-ID och märkplåt på aggregatet.',
-    required: true
-  },
-  {
-    id: 'remskiva',
-    label: 'Remskiva',
-    description: 'Driv- och medremskiva med spår.',
-    componentType: 'Remskiva',
+    label: 'Objektskylt',
+    description: 'Läs system-ID och skapa aggregatet.',
     required: true
   },
   {
@@ -53,30 +51,37 @@ const CAPTURE_TASKS: CaptureTask[] = [
     required: true
   },
   {
+    id: 'filter',
+    label: 'Filter',
+    description: 'Filterklass och dimension.',
+    componentType: 'Filter',
+    required: true
+  },
+  {
+    id: 'remskiva',
+    label: 'Remskiva',
+    description: 'Driv- och medremskiva med spår.',
+    componentType: 'Remskiva',
+    required: true
+  },
+  {
     id: 'lager',
     label: 'Lager',
-    description: 'Lagerkod och placering.',
+    description: 'Lagertyp, placering och antal.',
     componentType: 'Lager',
     required: true
   },
   {
     id: 'motor',
     label: 'Motor',
-    description: 'Motorplåt, effekt och märkström.',
-    componentType: 'Motor',
-    required: true
+    description: 'Motormodell, effekt och märkström.',
+    componentType: 'Motor'
   },
   {
     id: 'flakt',
     label: 'Fläkt',
-    description: 'Hjul/vinge, diameter och rotationsriktning.',
+    description: 'Fläkttyp, diameter och rotationsriktning.',
     componentType: 'Fläkt'
-  },
-  {
-    id: 'filter',
-    label: 'Filter',
-    description: 'Filterklass och dimension.',
-    componentType: 'Filter'
   }
 ];
 
@@ -88,230 +93,77 @@ function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function getTaskById(taskId: string): CaptureTask {
+function findTask(taskId: string): CaptureTask {
   return CAPTURE_TASKS.find((task) => task.id === taskId) ?? CAPTURE_TASKS[0];
+}
+
+function getNextTaskId(currentTaskId: string, captured: Record<string, string>): string {
+  const currentIndex = CAPTURE_TASKS.findIndex((task) => task.id === currentTaskId);
+  const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
+
+  for (let i = startIndex; i < CAPTURE_TASKS.length; i += 1) {
+    const task = CAPTURE_TASKS[i];
+    if (!captured[task.id]) {
+      return task.id;
+    }
+  }
+
+  return currentTaskId;
+}
+
+function normalizeAutoAttributes(
+  componentType: ComponentType,
+  suggested: Record<string, string> | undefined
+): Record<string, string> {
+  const template = createEmptyAttributes(componentType);
+
+  for (const field of COMPONENT_FIELD_CONFIG[componentType]) {
+    const value = suggested?.[field.key]?.trim();
+    template[field.key] = value || 'Ej avläst';
+  }
+
+  return template;
 }
 
 export default function HomePage() {
   const [mode, setMode] = useState<AppMode>('lagg-till');
 
-  const [selectedTaskId, setSelectedTaskId] = useState<string>(CAPTURE_TASKS[0].id);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>('skylt');
   const [capturedPhotos, setCapturedPhotos] = useState<Record<string, string>>({});
 
-  const [systemPositionImage, setSystemPositionImage] = useState<string | null>(null);
   const [systemPositionId, setSystemPositionId] = useState('');
-  const [position, setPosition] = useState('');
   const [department, setDepartment] = useState('');
+  const [position, setPosition] = useState('');
   const [aggregateNotes, setAggregateNotes] = useState('');
-  const [systemAnalysis, setSystemAnalysis] = useState<SystemPositionAnalysis | null>(null);
 
   const [currentAggregate, setCurrentAggregate] = useState<AggregateRecord | null>(null);
-  const [componentType, setComponentType] = useState<ComponentType>('Motor');
-  const [componentImage, setComponentImage] = useState<string | null>(null);
-  const [componentValue, setComponentValue] = useState('');
-  const [componentAttributes, setComponentAttributes] = useState<Record<string, string>>(
-    () => createEmptyAttributes('Motor')
+
+  const [manualComponentType, setManualComponentType] = useState<ComponentType>('Kilrem');
+  const [manualValue, setManualValue] = useState('');
+  const [manualAttributes, setManualAttributes] = useState<Record<string, string>>(
+    () => createEmptyAttributes('Kilrem')
   );
-  const [componentNotes, setComponentNotes] = useState('');
-  const [componentAnalysis, setComponentAnalysis] = useState<ComponentAnalysis | null>(null);
+  const [manualNotes, setManualNotes] = useState('');
+  const [isSavingManual, setIsSavingManual] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AggregateRecord[]>([]);
+  const [departmentFilter, setDepartmentFilter] = useState('alla');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('nyast');
 
-  const [isAnalyzingSystem, setIsAnalyzingSystem] = useState(false);
-  const [isCreatingAggregate, setIsCreatingAggregate] = useState(false);
-  const [isAnalyzingComponent, setIsAnalyzingComponent] = useState(false);
-  const [isSavingComponent, setIsSavingComponent] = useState(false);
+  const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('');
 
-  const selectedTask = getTaskById(selectedTaskId);
-  const canCaptureSelectedTask = !selectedTask.componentType || Boolean(currentAggregate);
+  const selectedTask = findTask(selectedTaskId);
+  const aggregateReady = Boolean(currentAggregate);
+
   const requiredDone = REQUIRED_TASK_IDS.filter((id) => Boolean(capturedPhotos[id])).length;
   const completionRate = Math.round((requiredDone / REQUIRED_TASK_IDS.length) * 100);
 
-  const clearStatus = () => {
-    setError(null);
-    setStatus('');
-  };
-
-  const handleTaskSelection = (taskId: string) => {
-    const task = getTaskById(taskId);
-    setSelectedTaskId(taskId);
-
-    if (task.componentType) {
-      setComponentType(task.componentType);
-      setComponentAttributes(createEmptyAttributes(task.componentType));
-      setComponentValue('');
-      setComponentNotes('');
-      setComponentAnalysis(null);
-    }
-  };
-
-  const handleSystemCapture = async (imageDataUrl: string) => {
-    clearStatus();
-    setCapturedPhotos((current) => ({ ...current, skylt: imageDataUrl }));
-    setSystemPositionImage(imageDataUrl);
-    setIsAnalyzingSystem(true);
-
-    try {
-      const analysis = await analyzeSystemPosition(imageDataUrl);
-      setSystemAnalysis(analysis);
-      setSystemPositionId(analysis.systemPositionId || '');
-      setStatus('Objektsskylt tolkad. Bekräfta system-ID innan du sparar aggregatet.');
-    } catch (captureError) {
-      setError(`Kunde inte analysera objektsskylt: ${String(captureError)}`);
-    } finally {
-      setIsAnalyzingSystem(false);
-    }
-  };
-
-  const handleComponentCapture = async (
-    task: CaptureTask,
-    imageDataUrl: string
-  ) => {
-    clearStatus();
-
-    if (!task.componentType) {
-      return;
-    }
-
-    if (!currentAggregate) {
-      setError('Skapa aggregatet först innan du fotograferar komponenter.');
-      return;
-    }
-
-    setCapturedPhotos((current) => ({ ...current, [task.id]: imageDataUrl }));
-    setComponentType(task.componentType);
-    setComponentImage(imageDataUrl);
-    setIsAnalyzingComponent(true);
-
-    try {
-      const analysis = await analyzeComponentImage(task.componentType, imageDataUrl);
-      setComponentAnalysis(analysis);
-      setComponentValue(analysis.identifiedValue || '');
-      setComponentAttributes({
-        ...createEmptyAttributes(task.componentType),
-        ...analysis.suggestedAttributes
-      });
-      setStatus(`${task.label} analyserad. Verifiera och spara komponentdata.`);
-    } catch (analysisError) {
-      setError(`Kunde inte analysera ${task.label.toLowerCase()}: ${String(analysisError)}`);
-    } finally {
-      setIsAnalyzingComponent(false);
-    }
-  };
-
-  const handleTaskCapture = async (imageDataUrl: string) => {
-    if (selectedTask.id === 'skylt') {
-      await handleSystemCapture(imageDataUrl);
-      return;
-    }
-
-    await handleComponentCapture(selectedTask, imageDataUrl);
-  };
-
-  const handleCreateAggregate = async () => {
-    clearStatus();
-
-    if (!systemPositionId.trim()) {
-      setError('Systempositionens ID måste anges innan du kan spara aggregatet.');
-      return;
-    }
-
-    if (!systemPositionImage) {
-      setError('Ta först en bild på objektsskylten.');
-      return;
-    }
-
-    setIsCreatingAggregate(true);
-
-    try {
-      const aggregate = await createAggregate({
-        systemPositionId: systemPositionId.trim(),
-        position: position.trim() || undefined,
-        department: department.trim() || undefined,
-        notes: aggregateNotes.trim() || undefined,
-        systemPositionImageDataUrl: systemPositionImage || undefined
-      });
-
-      setCurrentAggregate(aggregate);
-      setStatus(`Aggregat ${aggregate.systemPositionId} skapat. Fortsätt med fotomenyn till vänster.`);
-    } catch (createError) {
-      setError(`Kunde inte skapa aggregat: ${String(createError)}`);
-    } finally {
-      setIsCreatingAggregate(false);
-    }
-  };
-
-  const handleSaveComponent = async () => {
-    clearStatus();
-
-    if (!currentAggregate) {
-      setError('Inget aggregat är valt.');
-      return;
-    }
-
-    if (!componentValue.trim()) {
-      setError('Identifierat värde måste fyllas i innan sparning.');
-      return;
-    }
-
-    const missingAttributeLabels = COMPONENT_FIELD_CONFIG[componentType]
-      .filter((field) => !componentAttributes[field.key]?.trim())
-      .map((field) => field.label);
-
-    if (missingAttributeLabels.length > 0) {
-      setError(`Fyll i obligatoriska fält: ${missingAttributeLabels.join(', ')}.`);
-      return;
-    }
-
-    setIsSavingComponent(true);
-
-    try {
-      const updated = await addAggregateComponent(currentAggregate.id, {
-        componentType,
-        identifiedValue: componentValue.trim(),
-        notes: componentNotes.trim() || undefined,
-        imageDataUrl: componentImage || undefined,
-        attributes: componentAttributes
-      });
-
-      setCurrentAggregate(updated);
-      setComponentImage(null);
-      setComponentValue('');
-      setComponentAttributes(createEmptyAttributes(componentType));
-      setComponentNotes('');
-      setComponentAnalysis(null);
-      setStatus(`${componentType} sparad på aggregatet.`);
-    } catch (saveError) {
-      setError(`Kunde inte spara komponent: ${String(saveError)}`);
-    } finally {
-      setIsSavingComponent(false);
-    }
-  };
-
-  const handleSearch = async (queryOverride?: string) => {
-    clearStatus();
-    setIsSearching(true);
-
-    try {
-      const query = queryOverride ?? searchQuery;
-      const results = await searchAggregates(query);
-      setSearchResults(results);
-      setStatus(`${results.length} träffar hittades.`);
-    } catch (searchError) {
-      setError(`Kunde inte hämta resultat: ${String(searchError)}`);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
-
-  const taskStatus = useMemo(() => {
+  const taskStatuses = useMemo(() => {
     return CAPTURE_TASKS.map((task) => {
       const captured = Boolean(capturedPhotos[task.id]);
       const saved =
@@ -319,19 +171,224 @@ export default function HomePage() {
         !!currentAggregate?.components.some(
           (component) => component.componentType === task.componentType
         );
+      const locked = !aggregateReady && task.id !== 'skylt';
 
-      return { ...task, captured, saved };
+      return { ...task, captured, saved, locked };
     });
-  }, [capturedPhotos, currentAggregate]);
+  }, [capturedPhotos, currentAggregate, aggregateReady]);
+
+  const departmentOptions = useMemo(() => {
+    const values = searchResults
+      .map((record) => record.department?.trim())
+      .filter((value): value is string => Boolean(value));
+
+    return ['alla', ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, 'sv-SE'))];
+  }, [searchResults]);
+
+  const filteredSearchResults = useMemo(() => {
+    const scoped =
+      departmentFilter === 'alla'
+        ? searchResults
+        : searchResults.filter((item) => (item.department ?? '') === departmentFilter);
+
+    return [...scoped].sort((a, b) => {
+      const aTime = new Date(a.updatedAt).getTime();
+      const bTime = new Date(b.updatedAt).getTime();
+      return sortOrder === 'nyast' ? bTime - aTime : aTime - bTime;
+    });
+  }, [departmentFilter, searchResults, sortOrder]);
+
+  const clearFeedback = () => {
+    setError(null);
+    setStatus('');
+  };
+
+  const handleTaskSelection = (taskId: string) => {
+    const task = findTask(taskId);
+    if (!aggregateReady && task.id !== 'skylt') {
+      setError('Steg 1 är alltid objektskylt. Skapa aggregatet först.');
+      return;
+    }
+
+    setSelectedTaskId(taskId);
+  };
+
+  const ensureAggregate = async (
+    objectPhotoDataUrl: string,
+    forcedSystemPositionId?: string
+  ): Promise<AggregateRecord> => {
+    if (currentAggregate) {
+      return currentAggregate;
+    }
+
+    const candidateId = forcedSystemPositionId?.trim() || systemPositionId.trim();
+    if (!candidateId) {
+      throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
+    }
+
+    const created = await createAggregate({
+      systemPositionId: candidateId,
+      position: position.trim() || undefined,
+      department: department.trim() || undefined,
+      notes: aggregateNotes.trim() || undefined,
+      systemPositionImageDataUrl: objectPhotoDataUrl
+    });
+
+    setCurrentAggregate(created);
+    setSystemPositionId(created.systemPositionId);
+    return created;
+  };
+
+  const handleSearch = async (queryOverride?: string) => {
+    clearFeedback();
+    setIsSearching(true);
+
+    try {
+      const query = queryOverride ?? searchQuery;
+      const results = await searchAggregates(query);
+      setSearchResults(results);
+      setStatus(`${results.length} träffar i biblioteket.`);
+    } catch (searchError) {
+      setError(`Kunde inte hämta biblioteket: ${String(searchError)}`);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleCapture = async (imageDataUrl: string) => {
+    clearFeedback();
+    setIsProcessingCapture(true);
+
+    const task = selectedTask;
+
+    try {
+      if (task.id === 'skylt') {
+        const analysis = await analyzeSystemPosition(imageDataUrl);
+        const aiId = analysis.systemPositionId?.trim();
+        const resolvedId = aiId && aiId !== 'MANUELL-KRAVS' ? aiId : systemPositionId.trim();
+
+        if (!resolvedId) {
+          throw new Error(
+            'Kunde inte läsa ID från skylten. Ange Systemposition manuellt och ladda upp/fota skylten igen.'
+          );
+        }
+
+        setSystemPositionId(resolvedId);
+        await ensureAggregate(imageDataUrl, resolvedId);
+        const nextCaptured = { ...capturedPhotos, skylt: imageDataUrl };
+        setCapturedPhotos(nextCaptured);
+        setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
+
+        setStatus(
+          `Objektskylt tolkad (${toPercent(
+            analysis.confidence
+          )}) och aggregat skapat. Fortsätt med komponentfoton.`
+        );
+        return;
+      }
+
+      if (!aggregateReady || !currentAggregate || !capturedPhotos.skylt) {
+        throw new Error('Objektskylt måste registreras först för att skapa aggregat.');
+      }
+
+      if (!task.componentType) {
+        throw new Error('Felaktig fotopunkt.');
+      }
+
+      let identifiedValue = `Ej avläst (${task.label})`;
+      let attributes = createEmptyAttributes(task.componentType);
+      let note = 'Automatiskt registrerad utan säker AI-tolkning.';
+
+      try {
+        const analysis = await analyzeComponentImage(task.componentType, imageDataUrl);
+        identifiedValue = analysis.identifiedValue?.trim() || identifiedValue;
+        attributes = normalizeAutoAttributes(task.componentType, analysis.suggestedAttributes);
+        note = `Automatiskt registrerad (${toPercent(analysis.confidence)}): ${analysis.notes}`;
+      } catch {
+        attributes = normalizeAutoAttributes(task.componentType, undefined);
+      }
+
+      const updated = await addAggregateComponent(currentAggregate.id, {
+        componentType: task.componentType,
+        identifiedValue,
+        imageDataUrl,
+        notes: note,
+        attributes
+      });
+
+      const nextCaptured = { ...capturedPhotos, [task.id]: imageDataUrl };
+      setCapturedPhotos(nextCaptured);
+      setCurrentAggregate(updated);
+      setSelectedTaskId(getNextTaskId(task.id, nextCaptured));
+      setStatus(`${task.label} tolkad och sparad automatiskt i biblioteket.`);
+    } catch (captureError) {
+      setError(`Kunde inte slutföra ${task.label.toLowerCase()}: ${String(captureError)}`);
+    } finally {
+      setIsProcessingCapture(false);
+    }
+  };
+
+  const handleManualTypeChange = (nextType: ComponentType) => {
+    setManualComponentType(nextType);
+    setManualValue('');
+    setManualAttributes(createEmptyAttributes(nextType));
+    setManualNotes('');
+  };
+
+  const handleManualSave = async () => {
+    clearFeedback();
+
+    if (!aggregateReady || !currentAggregate) {
+      setError('Skapa aggregatet via objektskylt först innan manuell registrering.');
+      return;
+    }
+
+    if (!manualValue.trim()) {
+      setError('Identifierat värde krävs för manuell registrering.');
+      return;
+    }
+
+    const missing = COMPONENT_FIELD_CONFIG[manualComponentType]
+      .filter((field) => !manualAttributes[field.key]?.trim())
+      .map((field) => field.label);
+
+    if (missing.length > 0) {
+      setError(`Fyll i obligatoriska fält: ${missing.join(', ')}.`);
+      return;
+    }
+
+    setIsSavingManual(true);
+
+    try {
+      const updated = await addAggregateComponent(currentAggregate.id, {
+        componentType: manualComponentType,
+        identifiedValue: manualValue.trim(),
+        attributes: manualAttributes,
+        notes: manualNotes.trim() || 'Manuellt registrerad post.'
+      });
+
+      setCurrentAggregate(updated);
+      setManualValue('');
+      setManualAttributes(createEmptyAttributes(manualComponentType));
+      setManualNotes('');
+      setStatus(`${manualComponentType} sparad manuellt i biblioteket.`);
+    } catch (manualError) {
+      setError(`Kunde inte spara manuell post: ${String(manualError)}`);
+    } finally {
+      setIsSavingManual(false);
+    }
+  };
+
+  const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
 
   return (
     <main className={styles.pageRoot}>
       <header className={styles.hero}>
         <p className={styles.heroKicker}>Objektbas · Ventilation</p>
-        <h1 className={styles.heroTitle}>Fältklar aggregatregistrering</h1>
+        <h1 className={styles.heroTitle}>Enkel dokumentation med foto först</h1>
         <p className={styles.heroText}>
-          Byggt för tekniker i drift: välj fotopunkt, ta bild, verifiera data och
-          spara utan onödiga klick.
+          Flödet är byggt för fältarbete: objektskylt först för att skapa aggregat,
+          därefter komponentfoton som tolkas och sparas automatiskt i ett sökbart bibliotek.
         </p>
 
         <div className={styles.modeSwitch}>
@@ -341,7 +398,7 @@ export default function HomePage() {
               mode === 'lagg-till' ? styles.modeButtonActive : ''
             }`}
           >
-            Lägg till aggregat
+            Registrera med foto
           </button>
           <button
             onClick={() => {
@@ -352,7 +409,7 @@ export default function HomePage() {
               mode === 'sok' ? styles.modeButtonActive : ''
             }`}
           >
-            Sök historik
+            Bibliotek
           </button>
         </div>
       </header>
@@ -364,25 +421,25 @@ export default function HomePage() {
         <section className={styles.addLayout}>
           <aside className={styles.card}>
             <div className={styles.cardHeader}>
-              <h2>Fotomeny</h2>
-              <span className={styles.badge}>{requiredDone}/{REQUIRED_TASK_IDS.length} klara</span>
+              <h2>Fotopunkter</h2>
+              <span className={styles.badge}>
+                {requiredDone}/{REQUIRED_TASK_IDS.length} obligatoriska
+              </span>
             </div>
 
             <div className={styles.progressTrack}>
-              <div
-                className={styles.progressValue}
-                style={{ width: `${completionRate}%` }}
-              />
+              <div className={styles.progressValue} style={{ width: `${completionRate}%` }} />
             </div>
 
             <ul className={styles.taskList}>
-              {taskStatus.map((task) => (
+              {taskStatuses.map((task) => (
                 <li key={task.id}>
                   <button
                     className={`${styles.taskButton} ${
                       selectedTaskId === task.id ? styles.taskButtonActive : ''
-                    }`}
+                    } ${task.locked ? styles.taskButtonLocked : ''}`}
                     onClick={() => handleTaskSelection(task.id)}
+                    disabled={task.locked}
                   >
                     <div>
                       <strong>{task.label}</strong>
@@ -407,52 +464,45 @@ export default function HomePage() {
           <section className={styles.workspace}>
             <article className={styles.card}>
               <div className={styles.cardHeader}>
-                <h2>Aktivt fotomoment: {selectedTask.label}</h2>
-                {selectedTask.componentType && !currentAggregate && (
-                  <span className={styles.blocked}>Låst tills aggregat är skapat</span>
-                )}
+                <h2>Aktivt moment: {selectedTask.label}</h2>
+                {isProcessingCapture && <span className={styles.badge}>Bearbetar...</span>}
               </div>
 
               <CameraCapture
-                onCapture={handleTaskCapture}
+                onCapture={handleCapture}
                 title={`Fotografera ${selectedTask.label.toLowerCase()}`}
-                subtitle={selectedTask.componentType ? 'Komponentbild' : 'Objektbild'}
-                captureLabel={`Spara bild: ${selectedTask.label}`}
+                subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
+                captureLabel={`Spara ${selectedTask.label}`}
+                uploadLabel='Ladda upp foto'
                 helperText={
-                  canCaptureSelectedTask
-                    ? 'Kameran startar endast när du trycker på Starta kamera.'
-                    : 'Skapa aggregatet först för att låsa upp komponentfotografering.'
+                  selectedTask.id === 'skylt'
+                    ? 'Du kan fota live eller ladda upp en bild. Detta steg skapar aggregatet.'
+                    : 'Bild tolkas och sparas automatiskt. Vid behov kan du komplettera manuellt nedan.'
                 }
-                disabled={
-                  !canCaptureSelectedTask ||
-                  isAnalyzingSystem ||
-                  isAnalyzingComponent ||
-                  isCreatingAggregate ||
-                  isSavingComponent
-                }
+                disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
               />
 
               {selectedPhoto && (
                 <div className={styles.previewWrap}>
-                  <p>Senaste bild för {selectedTask.label}</p>
-                  <img src={selectedPhoto} alt={`Bild för ${selectedTask.label}`} />
+                  <p>Senaste bild: {selectedTask.label}</p>
+                  <img src={selectedPhoto} alt={`Foto ${selectedTask.label}`} />
                 </div>
               )}
             </article>
 
             <article className={styles.card}>
               <div className={styles.cardHeader}>
-                <h2>Aggregatdata</h2>
-                {currentAggregate && (
-                  <span className={styles.aggregatePill}>
-                    Aktivt aggregat: {currentAggregate.systemPositionId}
-                  </span>
-                )}
+                <h2>Aggregatram</h2>
+                <span className={styles.aggregatePill}>
+                  {currentAggregate
+                    ? `Aktivt ID: ${currentAggregate.systemPositionId}`
+                    : 'Skapas efter objektskylt'}
+                </span>
               </div>
 
-              <div className={styles.formGrid}>
+              <div className={styles.quickForm}>
                 <label>
-                  Systemposition (ID)
+                  Systemposition
                   <input
                     value={systemPositionId}
                     onChange={(event) => setSystemPositionId(event.target.value)}
@@ -461,78 +511,62 @@ export default function HomePage() {
                 </label>
 
                 <label>
-                  Position
-                  <input
-                    value={position}
-                    onChange={(event) => setPosition(event.target.value)}
-                    placeholder='Exempel: Takplan 2'
-                  />
-                </label>
-
-                <label>
                   Avdelning
                   <input
                     value={department}
                     onChange={(event) => setDepartment(event.target.value)}
+                    list='department-presets'
                     placeholder='Exempel: Produktion'
+                  />
+                  <datalist id='department-presets'>
+                    {DEPARTMENT_PRESETS.map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </label>
+
+                <label>
+                  Position
+                  <input
+                    value={position}
+                    onChange={(event) => setPosition(event.target.value)}
+                    placeholder='Exempel: Takplan 2, AHU-rum'
                   />
                 </label>
 
-                <label className={styles.fullWidth}>
-                  Kommentar
+                <label>
+                  Notering
                   <textarea
                     value={aggregateNotes}
                     onChange={(event) => setAggregateNotes(event.target.value)}
-                    placeholder='Skick, ljudnivå, åtkomst eller annat som nästa tekniker behöver veta.'
+                    placeholder='Valfri kontext för nästa tekniker.'
                   />
                 </label>
               </div>
 
-              {systemAnalysis && (
-                <div className={styles.aiBox}>
-                  <p>
-                    AI-förslag: <strong>{systemAnalysis.systemPositionId || 'Tomt'}</strong>
-                    {' · '}
-                    {toPercent(systemAnalysis.confidence)}
-                  </p>
-                  <p>{systemAnalysis.notes}</p>
-                </div>
-              )}
-
-              <button
-                onClick={handleCreateAggregate}
-                disabled={isAnalyzingSystem || isCreatingAggregate}
-                className={styles.primaryAction}
-              >
-                {isAnalyzingSystem
-                  ? 'Analyserar objektsskylt...'
-                  : isCreatingAggregate
-                  ? 'Skapar aggregat...'
-                  : 'Skapa aggregat'}
-              </button>
+              <div className={styles.libraryHint}>
+                <strong>Regel i flödet:</strong>
+                <p>
+                  Objektskylt är alltid steg 1. När aggregatet är skapat låses
+                  komponentfotografering upp och varje bild sparas direkt i biblioteket.
+                </p>
+              </div>
             </article>
 
             <article className={styles.card}>
               <div className={styles.cardHeader}>
-                <h2>Komponentverifiering</h2>
-                <span className={styles.badge}>
-                  {currentAggregate?.components.length ?? 0} sparade komponenter
-                </span>
+                <h2>Manuell registrering (fallback)</h2>
+                <span className={styles.badge}>Använd vid svårläst bild</span>
               </div>
 
-              <div className={styles.formGrid}>
+              <div className={styles.manualGrid}>
                 <label>
                   Komponenttyp
                   <select
-                    value={componentType}
-                    onChange={(event) => {
-                      const next = event.target.value as ComponentType;
-                      setComponentType(next);
-                      setComponentAttributes(createEmptyAttributes(next));
-                      setComponentValue('');
-                      setComponentNotes('');
-                      setComponentAnalysis(null);
-                    }}
+                    value={manualComponentType}
+                    onChange={(event) =>
+                      handleManualTypeChange(event.target.value as ComponentType)
+                    }
                   >
                     {COMPONENT_OPTIONS.map((option) => (
                       <option key={option} value={option}>
@@ -545,19 +579,19 @@ export default function HomePage() {
                 <label>
                   Identifierat värde
                   <input
-                    value={componentValue}
-                    onChange={(event) => setComponentValue(event.target.value)}
-                    placeholder='Ex: SPA 1180, 6205-2RS C3, Radial 450'
+                    value={manualValue}
+                    onChange={(event) => setManualValue(event.target.value)}
+                    placeholder='Exempel: SPA 1180, 6205-2RS C3'
                   />
                 </label>
 
-                {COMPONENT_FIELD_CONFIG[componentType].map((field) => (
+                {COMPONENT_FIELD_CONFIG[manualComponentType].map((field) => (
                   <label key={field.key}>
                     {field.label}
                     <input
-                      value={componentAttributes[field.key] ?? ''}
+                      value={manualAttributes[field.key] ?? ''}
                       onChange={(event) =>
-                        setComponentAttributes((current) => ({
+                        setManualAttributes((current) => ({
                           ...current,
                           [field.key]: event.target.value
                         }))
@@ -567,41 +601,34 @@ export default function HomePage() {
                   </label>
                 ))}
 
-                <label className={styles.fullWidth}>
+                <label className={styles.fullRow}>
                   Notering
                   <textarea
-                    value={componentNotes}
-                    onChange={(event) => setComponentNotes(event.target.value)}
-                    placeholder='Ex: Sprickor i rem, spel i lager, filterbyte krävs nästa stopp.'
+                    value={manualNotes}
+                    onChange={(event) => setManualNotes(event.target.value)}
+                    placeholder='Exempel: OCR misslyckades, värde kontrollerat manuellt.'
                   />
                 </label>
               </div>
 
-              {componentAnalysis && (
-                <div className={styles.aiBoxSuccess}>
-                  <p>
-                    AI-förslag ({componentAnalysis.componentType}):{' '}
-                    <strong>{componentAnalysis.identifiedValue}</strong>
-                    {' · '}
-                    {toPercent(componentAnalysis.confidence)}
-                  </p>
-                  <p>{componentAnalysis.notes}</p>
-                </div>
-              )}
-
               <button
-                onClick={handleSaveComponent}
-                disabled={isAnalyzingComponent || isSavingComponent || !currentAggregate}
-                className={styles.primaryAction}
+                className={styles.manualSaveButton}
+                onClick={handleManualSave}
+                disabled={!aggregateReady || isSavingManual}
               >
-                {isAnalyzingComponent
-                  ? 'Analyserar komponentbild...'
-                  : isSavingComponent
-                  ? 'Sparar komponent...'
-                  : 'Spara komponent'}
+                {isSavingManual ? 'Sparar...' : 'Spara manuell post'}
               </button>
+            </article>
 
-              {!!currentAggregate?.components.length && (
+            <article className={styles.card}>
+              <div className={styles.cardHeader}>
+                <h2>Sparade komponenter</h2>
+                <span className={styles.badge}>
+                  {currentAggregate?.components.length ?? 0} komponentposter
+                </span>
+              </div>
+
+              {!!currentAggregate?.components.length ? (
                 <ul className={styles.componentList}>
                   {currentAggregate.components.map((component) => (
                     <li key={component.id}>
@@ -613,10 +640,14 @@ export default function HomePage() {
                           .map(([key, value]) => `${key}: ${value}`)
                           .join(' · ')}
                       </p>
-                      {component.notes && <p>{component.notes}</p>}
                     </li>
                   ))}
                 </ul>
+              ) : (
+                <p className={styles.emptyState}>
+                  Inga komponenter sparade ännu. Börja med objektskylt, fortsätt sedan
+                  med foto eller manuell registrering.
+                </p>
               )}
             </article>
           </section>
@@ -627,23 +658,50 @@ export default function HomePage() {
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder='Sök på systemposition, avdelning, position eller komponent'
+              placeholder='Sök på systemposition, komponent eller fritext'
             />
             <button onClick={() => void handleSearch()} disabled={isSearching}>
               {isSearching ? 'Söker...' : 'Sök'}
             </button>
           </div>
 
+          <div className={styles.libraryToolbar}>
+            <label>
+              Avdelning
+              <select
+                value={departmentFilter}
+                onChange={(event) => setDepartmentFilter(event.target.value)}
+              >
+                {departmentOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option === 'alla' ? 'Alla avdelningar' : option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Sortering
+              <select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value as SortOrder)}
+              >
+                <option value='nyast'>Senast uppdaterad</option>
+                <option value='aldst'>Äldst först</option>
+              </select>
+            </label>
+          </div>
+
           <ul className={styles.searchResultList}>
-            {searchResults.map((aggregate) => (
+            {filteredSearchResults.map((aggregate) => (
               <li key={aggregate.id}>
                 <header>
                   <strong>{aggregate.systemPositionId}</strong>
                   <span>{new Date(aggregate.updatedAt).toLocaleString('sv-SE')}</span>
                 </header>
                 <p>
-                  Position: {aggregate.position || 'Ej angiven'} · Avdelning:{' '}
-                  {aggregate.department || 'Ej angiven'}
+                  Avdelning: {aggregate.department || 'Ej satt'} · Position:{' '}
+                  {aggregate.position || 'Ej satt'}
                 </p>
 
                 {!!aggregate.components.length && (
@@ -659,8 +717,10 @@ export default function HomePage() {
             ))}
           </ul>
 
-          {!isSearching && searchResults.length === 0 && (
-            <p className={styles.emptyState}>Inga sparade poster hittades ännu.</p>
+          {!isSearching && filteredSearchResults.length === 0 && (
+            <p className={styles.emptyState}>
+              Inga träffar ännu. Registrera objekt via fotoflödet så byggs biblioteket upp.
+            </p>
           )}
         </section>
       )}

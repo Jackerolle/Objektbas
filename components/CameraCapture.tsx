@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import type { ChangeEvent } from 'react';
 
 type Props = {
   onCapture: (dataUrl: string) => void;
@@ -9,21 +10,25 @@ type Props = {
   captureLabel?: string;
   helperText?: string;
   disabled?: boolean;
+  uploadLabel?: string;
 };
 
 export function CameraCapture({
   onCapture,
   title = 'Fota objekt',
-  subtitle = 'Kameraläge',
+  subtitle = 'KameralÃ¤ge',
   captureLabel = 'Ta bild',
   helperText,
-  disabled = false
+  disabled = false,
+  uploadLabel = 'Ladda upp foto'
 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -56,7 +61,7 @@ export function CameraCapture({
 
       setIsActive(true);
     } catch (err) {
-      setError('Kan inte starta kameran. Kontrollera behörighet i webbläsaren.');
+      setError('Kan inte starta kameran. Kontrollera behÃ¶righet i webblÃ¤saren.');
       console.error(err);
     } finally {
       setIsStarting(false);
@@ -94,6 +99,46 @@ export function CameraCapture({
     const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
     onCapture(dataUrl);
     stopCamera();
+  };
+
+  const handleSelectFile = () => {
+    if (disabled) {
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file || disabled) {
+      return;
+    }
+
+    setError(null);
+    setIsUploading(true);
+
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Kunde inte lÃ¤sa filen.'));
+        reader.readAsDataURL(file);
+      });
+
+      if (!dataUrl) {
+        throw new Error('Filen Ã¤r tom eller ogiltig.');
+      }
+
+      stopCamera();
+      onCapture(dataUrl);
+    } catch (uploadError) {
+      setError(String(uploadError));
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (
@@ -165,7 +210,7 @@ export function CameraCapture({
             }}
           >
             <p style={{ margin: 0 }}>
-              Kameran är avstängd tills du väljer att starta den.
+              Kameran Ã¤r avstÃ¤ngd tills du vÃ¤ljer att starta den.
             </p>
             <button
               onClick={startCamera}
@@ -199,10 +244,19 @@ export function CameraCapture({
         </p>
       )}
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+      <input
+        ref={fileInputRef}
+        type='file'
+        accept='image/*'
+        capture='environment'
+        onChange={handleFileChange}
+        style={{ display: 'none' }}
+      />
+
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
         <button
           onClick={handleCapture}
-          disabled={!isActive || disabled}
+          disabled={!isActive || disabled || isUploading}
           style={{
             flex: 1,
             padding: '0.85rem',
@@ -213,26 +267,41 @@ export function CameraCapture({
             color: '#020617',
             fontWeight: 700,
             fontSize: '1rem',
-            cursor: !isActive || disabled ? 'not-allowed' : 'pointer',
-            opacity: !isActive || disabled ? 0.55 : 1
+            cursor: !isActive || disabled || isUploading ? 'not-allowed' : 'pointer',
+            opacity: !isActive || disabled || isUploading ? 0.55 : 1
           }}
         >
           {captureLabel}
         </button>
         <button
+          onClick={handleSelectFile}
+          disabled={disabled || isUploading}
+          style={{
+            padding: '0.85rem 1rem',
+            borderRadius: '999px',
+            border: '1px solid rgba(148,163,184,0.45)',
+            background: 'rgba(15,23,42,0.65)',
+            color: '#e2e8f0',
+            cursor: disabled || isUploading ? 'not-allowed' : 'pointer',
+            opacity: disabled || isUploading ? 0.55 : 1
+          }}
+        >
+          {isUploading ? 'LÃ¤ser fil...' : uploadLabel}
+        </button>
+        <button
           onClick={stopCamera}
-          disabled={!isActive}
+          disabled={!isActive || isUploading}
           style={{
             padding: '0.85rem 1rem',
             borderRadius: '999px',
             border: '1px solid rgba(148,163,184,0.45)',
             background: 'transparent',
             color: '#e2e8f0',
-            cursor: !isActive ? 'not-allowed' : 'pointer',
-            opacity: !isActive ? 0.55 : 1
+            cursor: !isActive || isUploading ? 'not-allowed' : 'pointer',
+            opacity: !isActive || isUploading ? 0.55 : 1
           }}
         >
-          Stäng
+          StÃ¤ng
         </button>
       </div>
     </section>
