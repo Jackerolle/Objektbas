@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import {
   createEmptyAttributes,
   getMissingRequiredFields,
-  isKnownComponentType,
-  normalizeAttributes
+  normalizeAttributes,
+  resolveComponentType
 } from '@/lib/componentSchema';
 import {
   deleteComponentFromAggregate,
@@ -25,31 +25,32 @@ export async function PATCH(request: Request, context: RouteContext) {
     const payload = (await request.json()) as CreateAggregateComponentPayload;
 
     if (!payload.componentType?.trim()) {
-      return NextResponse.json({ error: 'Komponenttyp krävs.' }, { status: 400 });
+      return NextResponse.json({ error: 'Komponenttyp kravs.' }, { status: 400 });
     }
 
     if (!payload.identifiedValue?.trim()) {
-      return NextResponse.json({ error: 'Identifierat värde krävs.' }, { status: 400 });
+      return NextResponse.json({ error: 'Identifierat varde kravs.' }, { status: 400 });
     }
 
-    if (!isKnownComponentType(payload.componentType)) {
-      return NextResponse.json({ error: 'Okänd komponenttyp.' }, { status: 400 });
+    const resolvedComponentType = resolveComponentType(payload.componentType);
+    if (!resolvedComponentType) {
+      return NextResponse.json({ error: 'Okand komponenttyp.' }, { status: 400 });
     }
 
     const normalizedAttributes = {
-      ...createEmptyAttributes(payload.componentType),
+      ...createEmptyAttributes(resolvedComponentType),
       ...normalizeAttributes(payload.attributes)
     };
 
     const missing = getMissingRequiredFields(
-      payload.componentType,
+      resolvedComponentType,
       normalizedAttributes
     );
 
     if (missing.length > 0) {
       return NextResponse.json(
         {
-          error: `Fält saknas för ${payload.componentType}: ${missing
+          error: `Falt saknas for ${resolvedComponentType}: ${missing
             .map((field) => field.label)
             .join(', ')}.`
         },
@@ -62,7 +63,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       context.params.componentId,
       {
         ...payload,
-        componentType: payload.componentType.trim(),
+        componentType: resolvedComponentType,
         identifiedValue: payload.identifiedValue.trim(),
         assembly: payload.assembly?.trim() || undefined,
         subComponent: payload.subComponent?.trim() || undefined,

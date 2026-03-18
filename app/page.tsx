@@ -12,8 +12,8 @@ import {
 } from '@/lib/api';
 import {
   COMPONENT_FIELD_CONFIG,
-  COMPONENT_OPTIONS,
-  createEmptyAttributes
+  createEmptyAttributes,
+  getMissingRequiredFields
 } from '@/lib/componentSchema';
 import {
   AggregateRecord,
@@ -25,6 +25,102 @@ import {
   SystemPositionAnalysis
 } from '@/lib/types';
 import { useState } from 'react';
+
+type MainCategory = 'Aggregat' | 'Motor' | 'Fl\u00e4kt' | '\u00d6vrigt';
+
+type SubCategoryOption = {
+  label: string;
+  componentType: ComponentType;
+};
+
+const SUBCATEGORY_BY_MAIN: Record<MainCategory, SubCategoryOption[]> = {
+  Aggregat: [
+    { label: 'Kilrem', componentType: 'Kilrem' },
+    { label: 'Filter', componentType: 'Filter' },
+    { label: 'Kolfilter', componentType: 'Kolfilter' }
+  ],
+  Motor: [
+    { label: 'Motorskylt', componentType: 'Motorskylt' },
+    { label: 'Remskiva', componentType: 'Remskiva' },
+    { label: 'Bussning', componentType: 'Bussning' },
+    { label: 'Axeldiameter', componentType: 'Axeldiameter' },
+    { label: 'Lager', componentType: 'Lager' }
+  ],
+  'Fl\u00e4kt': [
+    { label: 'Remskiva', componentType: 'Remskiva' },
+    { label: 'Bussning', componentType: 'Bussning' },
+    { label: 'Axeldiameter', componentType: 'Axeldiameter' },
+    { label: 'Lager', componentType: 'Lager' }
+  ],
+  '\u00d6vrigt': [{ label: 'Notering', componentType: '\u00d6vrigt' }]
+};
+
+const MULTI_VALUE_TYPES = new Set<ComponentType>([
+  'Filter',
+  'Kolfilter',
+  '\u00d6vrigt'
+]);
+
+const MAIN_CATEGORY_OPTIONS = Object.keys(
+  SUBCATEGORY_BY_MAIN
+) as MainCategory[];
+
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function buildDefaultValue(
+  componentType: ComponentType,
+  typedValue: string,
+  attributes: Record<string, string>
+): string {
+  const direct = typedValue.trim();
+  if (direct) {
+    return direct;
+  }
+
+  if (componentType === 'Lager') {
+    const front = attributes.lagerFram?.trim();
+    const back = attributes.lagerBak?.trim();
+    if (front && back) {
+      return `Fram: ${front}, Bak: ${back}`;
+    }
+    if (front) {
+      return front;
+    }
+    if (back) {
+      return back;
+    }
+  }
+
+  if (componentType === 'Remskiva' && attributes.remskivaNamn?.trim()) {
+    return attributes.remskivaNamn.trim();
+  }
+
+  if (componentType === 'Bussning' && attributes.bussningStorlek?.trim()) {
+    return attributes.bussningStorlek.trim();
+  }
+
+  if (componentType === 'Axeldiameter' && attributes.axeldiameterMm?.trim()) {
+    return `${attributes.axeldiameterMm.trim()} mm`;
+  }
+
+  if (componentType === 'Motorskylt' && attributes.motorModell?.trim()) {
+    return attributes.motorModell.trim();
+  }
+
+  if (
+    (componentType === 'Filter' || componentType === 'Kolfilter') &&
+    attributes.filterNamn?.trim()
+  ) {
+    return attributes.filterNamn.trim();
+  }
+
+  return '';
+}
 
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -41,11 +137,12 @@ export default function HomePage() {
   const [systemAnalysis, setSystemAnalysis] = useState<SystemPositionAnalysis | null>(null);
 
   const [currentAggregate, setCurrentAggregate] = useState<AggregateRecord | null>(null);
-  const [componentType, setComponentType] = useState<ComponentType>('Motorbricka');
-  const [componentImage, setComponentImage] = useState<string | null>(null);
+  const [mainCategory, setMainCategory] = useState<MainCategory>('Aggregat');
+  const [componentType, setComponentType] = useState<ComponentType>('Kilrem');
   const [componentValue, setComponentValue] = useState('');
+  const [multiValueInput, setMultiValueInput] = useState('');
   const [componentAttributes, setComponentAttributes] = useState<Record<string, string>>(
-    () => createEmptyAttributes('Motorbricka')
+    () => createEmptyAttributes('Kilrem')
   );
   const [componentNotes, setComponentNotes] = useState('');
   const [componentAnalysis, setComponentAnalysis] = useState<ComponentAnalysis | null>(null);
@@ -75,6 +172,13 @@ export default function HomePage() {
 
   const getImportFingerprint = (file: File) =>
     `${file.name}:${file.size}:${file.lastModified}`;
+
+  const subCategoryOptions = SUBCATEGORY_BY_MAIN[mainCategory];
+  const selectedSubCategory =
+    subCategoryOptions.find((option) => option.componentType === componentType) ??
+    subCategoryOptions[0];
+  const selectedComponentType = selectedSubCategory.componentType;
+  const isMultiValueType = MULTI_VALUE_TYPES.has(selectedComponentType);
 
   const handleSystemCapture = async (imageDataUrl: string) => {
     clearStatus();
@@ -114,10 +218,10 @@ export default function HomePage() {
 
       setCurrentAggregate(aggregate);
       setComponentValue('');
+      setMultiValueInput('');
       setComponentNotes('');
-      setComponentImage(null);
       setComponentAnalysis(null);
-      setComponentAttributes(createEmptyAttributes(componentType));
+      setComponentAttributes(createEmptyAttributes(selectedComponentType));
       setStatus(`Aggregat ${aggregate.systemPositionId} skapades. Nu kan du lagga till komponenter.`);
     } catch (createError) {
       setError(`Kunde inte skapa aggregat: ${String(createError)}`);
@@ -134,15 +238,14 @@ export default function HomePage() {
       return;
     }
 
-    setComponentImage(imageDataUrl);
     setIsAnalyzingComponent(true);
 
     try {
-      const analysis = await analyzeComponentImage(componentType, imageDataUrl);
+      const analysis = await analyzeComponentImage(selectedComponentType, imageDataUrl);
       setComponentAnalysis(analysis);
       setComponentValue(analysis.identifiedValue || '');
       setComponentAttributes((current) => ({
-        ...createEmptyAttributes(componentType),
+        ...createEmptyAttributes(selectedComponentType),
         ...current,
         ...analysis.suggestedAttributes
       }));
@@ -162,14 +265,25 @@ export default function HomePage() {
       return;
     }
 
-    if (!componentValue.trim()) {
+    const defaultValue = buildDefaultValue(
+      selectedComponentType,
+      componentValue,
+      componentAttributes
+    );
+    const valuesToSave = [
+      defaultValue,
+      ...(isMultiValueType ? splitLines(multiValueInput) : [])
+    ].filter(Boolean);
+
+    if (valuesToSave.length === 0) {
       setError('Komponentvarde maste fyllas i innan sparning.');
       return;
     }
 
-    const missingAttributeLabels = COMPONENT_FIELD_CONFIG[componentType]
-      .filter((field) => !componentAttributes[field.key]?.trim())
-      .map((field) => field.label);
+    const missingAttributeLabels = getMissingRequiredFields(
+      selectedComponentType,
+      componentAttributes
+    ).map((field) => field.label);
 
     if (missingAttributeLabels.length > 0) {
       setError(`Fyll i obligatoriska falt: ${missingAttributeLabels.join(', ')}.`);
@@ -179,21 +293,27 @@ export default function HomePage() {
     setIsSavingComponent(true);
 
     try {
-      const updated = await addAggregateComponent(currentAggregate.id, {
-        componentType,
-        identifiedValue: componentValue.trim(),
-        notes: componentNotes.trim() || undefined,
-        imageDataUrl: componentImage || undefined,
-        attributes: componentAttributes
-      });
+      let updated = currentAggregate;
+      for (const identifiedValue of valuesToSave) {
+        updated = await addAggregateComponent(updated.id, {
+          componentType: selectedComponentType,
+          identifiedValue,
+          notes: componentNotes.trim() || undefined,
+          assembly: mainCategory,
+          subComponent: selectedSubCategory.label,
+          attributes: componentAttributes
+        });
+      }
 
       setCurrentAggregate(updated);
-      setComponentImage(null);
       setComponentValue('');
-      setComponentAttributes(createEmptyAttributes(componentType));
+      setMultiValueInput('');
+      setComponentAttributes(createEmptyAttributes(selectedComponentType));
       setComponentNotes('');
       setComponentAnalysis(null);
-      setStatus(`${componentType} sparad pa aggregatet.`);
+      setStatus(
+        `${valuesToSave.length} post(er) sparade under ${mainCategory} / ${selectedSubCategory.label}.`
+      );
     } catch (saveError) {
       setError(`Kunde inte spara komponent: ${String(saveError)}`);
     } finally {
@@ -522,7 +642,7 @@ export default function HomePage() {
             >
               <CameraCapture
                 onCapture={handleComponentCapture}
-                title={`Fota ${componentType.toLowerCase()}`}
+                title={`Fota ${selectedSubCategory.label.toLowerCase()}`}
                 subtitle='Steg 2 av 2'
                 captureLabel='Ta komponentbild'
               />
@@ -533,16 +653,20 @@ export default function HomePage() {
                 </h2>
 
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                  Komponenttyp
+                  Huvudkategori
                   <select
-                    value={componentType}
+                    value={mainCategory}
                     onChange={(event) => {
-                      const next = event.target.value as ComponentType;
-                      setComponentType(next);
+                      const nextMain = event.target.value as MainCategory;
+                      const firstSubCategory = SUBCATEGORY_BY_MAIN[nextMain][0];
+                      setMainCategory(nextMain);
+                      setComponentType(firstSubCategory.componentType);
                       setComponentValue('');
-                      setComponentAttributes(createEmptyAttributes(next));
+                      setMultiValueInput('');
+                      setComponentAttributes(
+                        createEmptyAttributes(firstSubCategory.componentType)
+                      );
                       setComponentNotes('');
-                      setComponentImage(null);
                       setComponentAnalysis(null);
                     }}
                     style={{
@@ -553,7 +677,7 @@ export default function HomePage() {
                       color: '#f8fafc'
                     }}
                   >
-                    {COMPONENT_OPTIONS.map((option) => (
+                    {MAIN_CATEGORY_OPTIONS.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -562,11 +686,44 @@ export default function HomePage() {
                 </label>
 
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
-                  Identifierat varde
+                  Underkategori
+                  <select
+                    value={selectedComponentType}
+                    onChange={(event) => {
+                      const next = event.target.value as ComponentType;
+                      setComponentType(next);
+                      setComponentValue('');
+                      setMultiValueInput('');
+                      setComponentAttributes(createEmptyAttributes(next));
+                      setComponentNotes('');
+                      setComponentAnalysis(null);
+                    }}
+                    style={{
+                      borderRadius: '0.7rem',
+                      border: '1px solid rgba(148,163,184,0.4)',
+                      padding: '0.65rem',
+                      background: '#020617',
+                      color: '#f8fafc'
+                    }}
+                  >
+                    {subCategoryOptions.map((option) => (
+                      <option key={`${mainCategory}-${option.label}`} value={option.componentType}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
+                  {selectedComponentType === '\u00d6vrigt' ? 'Notering' : 'Identifierat varde'}
                   <input
                     value={componentValue}
                     onChange={(event) => setComponentValue(event.target.value)}
-                    placeholder='Ex: SPA 1180, C3-lager 6205, F7-595x595'
+                    placeholder={
+                      selectedComponentType === '\u00d6vrigt'
+                        ? 'Skriv en notering'
+                        : 'Ex: SPA 1180, C3-lager 6205, F7-595x595'
+                    }
                     style={{
                       borderRadius: '0.7rem',
                       border: '1px solid rgba(148,163,184,0.4)',
@@ -577,7 +734,27 @@ export default function HomePage() {
                   />
                 </label>
 
-                {COMPONENT_FIELD_CONFIG[componentType].map((field) => (
+                {isMultiValueType && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}>
+                    Fler poster (en per rad)
+                    <textarea
+                      value={multiValueInput}
+                      onChange={(event) => setMultiValueInput(event.target.value)}
+                      placeholder='Ex: Filter 2\\nFilter 3'
+                      style={{
+                        minHeight: '80px',
+                        borderRadius: '0.7rem',
+                        border: '1px solid rgba(148,163,184,0.4)',
+                        padding: '0.65rem',
+                        background: '#020617',
+                        color: '#f8fafc',
+                        resize: 'vertical'
+                      }}
+                    />
+                  </label>
+                )}
+
+                {COMPONENT_FIELD_CONFIG[selectedComponentType].map((field) => (
                   <label
                     key={field.key}
                     style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.9rem' }}
@@ -693,7 +870,11 @@ export default function HomePage() {
                         }}
                       >
                         <p style={{ margin: '0 0 0.2rem' }}>
-                          <strong>{component.componentType}</strong>: {component.identifiedValue}
+                          <strong>
+                            {component.assembly || 'Okand'} /{' '}
+                            {component.subComponent || component.componentType}
+                          </strong>
+                          : {component.identifiedValue}
                         </p>
                         {Object.keys(component.attributes || {}).length > 0 && (
                           <p style={{ margin: '0 0 0.2rem', color: '#93c5fd', fontSize: '0.8rem' }}>
@@ -803,7 +984,10 @@ export default function HomePage() {
                           color: '#7dd3fc'
                         }}
                       >
-                        {component.componentType}: {component.identifiedValue}
+                        {(component.assembly || component.componentType) +
+                          ' / ' +
+                          (component.subComponent || component.componentType)}
+                        : {component.identifiedValue}
                         {Object.keys(component.attributes || {}).length > 0
                           ? ` (${Object.entries(component.attributes)
                               .slice(0, 1)

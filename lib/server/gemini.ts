@@ -1,5 +1,6 @@
 ﻿import {
   createEmptyAttributes,
+  getRequiredFieldConfigs,
   normalizeAttributes,
   resolveComponentType
 } from '@/lib/componentSchema';
@@ -200,11 +201,15 @@ export async function analyzeComponentWithGemini(
     };
   }
 
-  const requiredFields = Object.keys(createEmptyAttributes(resolvedComponentType));
+  const requiredFields = getRequiredFieldConfigs(resolvedComponentType).map(
+    (field) => field.key
+  );
+  const requiredFieldsText =
+    requiredFields.length > 0 ? requiredFields.join(', ') : 'inga';
 
   const prompt =
     `Du analyserar ventilationskomponenten '${resolvedComponentType}'. ` +
-    `Obligatoriska falt ar: ${requiredFields.join(', ')}. ` +
+    `Obligatoriska falt ar: ${requiredFieldsText}. ` +
     'Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
     'suggestedAttributes ska vara ett objekt med nyckel/varde. Inga markdown-block.';
 

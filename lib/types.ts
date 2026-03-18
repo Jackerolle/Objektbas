@@ -32,11 +32,16 @@ export type AppMode = 'lagg-till' | 'sok' | 'importera';
 
 export type ComponentType =
   | 'Motor'
-  | 'Fläkt'
+  | 'Fl\u00e4kt'
   | 'Kilrem'
   | 'Remskiva'
+  | 'Bussning'
+  | 'Axeldiameter'
   | 'Lager'
-  | 'Filter';
+  | 'Filter'
+  | 'Kolfilter'
+  | 'Motorskylt'
+  | '\u00d6vrigt';
 
 export type SystemPositionAnalysis = {
   systemPositionId: string;
@@ -61,6 +66,7 @@ export type CreateAggregatePayload = {
   position?: string;
   department?: string;
   notes?: string;
+  systemPositionImageDataUrl?: string;
 };
 
 export type CreateAggregateComponentPayload = {
@@ -69,6 +75,7 @@ export type CreateAggregateComponentPayload = {
   notes?: string;
   assembly?: string;
   subComponent?: string;
+  imageDataUrl?: string;
   attributes?: Record<string, string>;
 };
 
