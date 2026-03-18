@@ -132,6 +132,45 @@ export async function addAggregateComponent(
   return (await response.json()) as AggregateRecord;
 }
 
+export async function updateAggregateComponent(
+  aggregateId: string,
+  componentId: string,
+  payload: CreateAggregateComponentPayload
+): Promise<AggregateRecord> {
+  const response = await fetch(
+    toApiUrl(`/api/aggregates/${aggregateId}/components/${componentId}`),
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as AggregateRecord;
+}
+
+export async function deleteAggregateComponent(
+  aggregateId: string,
+  componentId: string
+): Promise<AggregateRecord> {
+  const response = await fetch(
+    toApiUrl(`/api/aggregates/${aggregateId}/components/${componentId}`),
+    {
+      method: 'DELETE'
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as AggregateRecord;
+}
+
 export async function updateAggregate(
   aggregateId: string,
   payload: CreateAggregatePayload
@@ -147,6 +186,16 @@ export async function updateAggregate(
   }
 
   return (await response.json()) as AggregateRecord;
+}
+
+export async function deleteAggregate(aggregateId: string): Promise<void> {
+  const response = await fetch(toApiUrl(`/api/aggregates/${aggregateId}`), {
+    method: 'DELETE'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
 }
 
 export async function searchAggregates(query: string): Promise<AggregateRecord[]> {

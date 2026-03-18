@@ -6,13 +6,17 @@ import {
   analyzeComponentImage,
   analyzeSystemPosition,
   createAggregate,
+  deleteAggregate,
+  deleteAggregateComponent,
   searchAggregates,
+  updateAggregateComponent,
   updateAggregate
 } from '@/lib/api';
 import {
   COMPONENT_FIELD_CONFIG,
   COMPONENT_OPTIONS,
-  createEmptyAttributes
+  createEmptyAttributes,
+  isKnownComponentType
 } from '@/lib/componentSchema';
 import {
   loadAggregateLocalPhotos,
@@ -228,6 +232,19 @@ export default function HomePage() {
   const [manualNotes, setManualNotes] = useState('');
   const [isSavingManual, setIsSavingManual] = useState(false);
 
+  const [editingComponentId, setEditingComponentId] = useState<string | null>(null);
+  const [editingComponentType, setEditingComponentType] = useState<ComponentType>('Kilrem');
+  const [editingAssembly, setEditingAssembly] = useState<AssemblyOption>('Motor');
+  const [editingSubComponent, setEditingSubComponent] = useState('Kilrem');
+  const [editingIdentifiedValue, setEditingIdentifiedValue] = useState('');
+  const [editingAttributes, setEditingAttributes] = useState<Record<string, string>>(
+    () => createEmptyAttributes('Kilrem')
+  );
+  const [editingNotes, setEditingNotes] = useState('');
+  const [isSavingComponentEdit, setIsSavingComponentEdit] = useState(false);
+  const [deletingComponentId, setDeletingComponentId] = useState<string | null>(null);
+  const [deletingAggregateId, setDeletingAggregateId] = useState<string | null>(null);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AggregateRecord[]>([]);
   const [departmentFilter, setDepartmentFilter] = useState('alla');
@@ -290,9 +307,30 @@ export default function HomePage() {
     [manualAssembly]
   );
 
+  const editingSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[editingAssembly] ?? [],
+    [editingAssembly]
+  );
+
   const clearFeedback = () => {
     setError(null);
     setStatus('');
+  };
+
+  const resetComponentEditing = () => {
+    setEditingComponentId(null);
+    setEditingComponentType('Kilrem');
+    setEditingAssembly('Motor');
+    setEditingSubComponent('Kilrem');
+    setEditingIdentifiedValue('');
+    setEditingAttributes(createEmptyAttributes('Kilrem'));
+    setEditingNotes('');
+  };
+
+  const syncAggregateInSearchResults = (nextAggregate: AggregateRecord) => {
+    setSearchResults((current) =>
+      current.map((item) => (item.id === nextAggregate.id ? nextAggregate : item))
+    );
   };
 
   useEffect(() => {
@@ -319,6 +357,7 @@ export default function HomePage() {
     setManualValue('');
     setManualAttributes(createEmptyAttributes('Kilrem'));
     setManualNotes('');
+    resetComponentEditing();
   };
 
   const openAddAggregateModal = () => {
@@ -368,6 +407,7 @@ export default function HomePage() {
     const created = await createAggregate(buildAggregatePayload(candidateId));
 
     setCurrentAggregate(created);
+    syncAggregateInSearchResults(created);
     setSystemPositionId(created.systemPositionId);
     return created;
   };
@@ -465,6 +505,7 @@ export default function HomePage() {
           : await ensureAggregate(resolvedId);
 
         setCurrentAggregate(aggregate);
+        syncAggregateInSearchResults(aggregate);
         const nextCaptured = { ...capturedPhotos, skylt: imageDataUrl };
         setCapturedPhotos(nextCaptured);
         void persistLocalPhoto(aggregate.id, 'skylt', imageDataUrl);
@@ -515,6 +556,7 @@ export default function HomePage() {
       const nextCaptured = { ...capturedPhotos, [task.id]: imageDataUrl };
       setCapturedPhotos(nextCaptured);
       setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
       void persistLocalPhoto(currentAggregate.id, task.id, imageDataUrl);
       setSelectedTaskId(getNextTaskId(task.id, nextCaptured));
       const scopeText = [captureAssembly, captureSubComponent.trim()]
@@ -550,6 +592,7 @@ export default function HomePage() {
       );
 
       setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
       setStatus('Aggregat uppdaterat.');
     } catch (saveError) {
       setError(`Kunde inte uppdatera aggregat: ${String(saveError)}`);
@@ -577,6 +620,7 @@ export default function HomePage() {
     try {
       const created = await ensureAggregate(candidateId);
       setCurrentAggregate(created);
+      syncAggregateInSearchResults(created);
 
       const nextCaptured = {
         ...capturedPhotos,
@@ -593,6 +637,7 @@ export default function HomePage() {
   };
 
   const handleOpenAggregateForEditing = (aggregate: AggregateRecord) => {
+    resetComponentEditing();
     setCurrentAggregate(aggregate);
     setStartMethod('foto');
     setIsAddModalOpen(false);
@@ -661,6 +706,7 @@ export default function HomePage() {
       });
 
       setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
       setManualValue('');
       setManualAttributes(createEmptyAttributes(manualComponentType));
       setManualNotes('');
@@ -671,6 +717,166 @@ export default function HomePage() {
       setError(`Kunde inte spara manuell post: ${String(manualError)}`);
     } finally {
       setIsSavingManual(false);
+    }
+  };
+
+  const handleStartEditComponent = (componentId: string) => {
+    if (!currentAggregate) {
+      return;
+    }
+
+    const component = currentAggregate.components.find((item) => item.id === componentId);
+    if (!component) {
+      return;
+    }
+
+    const componentType = isKnownComponentType(component.componentType)
+      ? component.componentType
+      : 'Kilrem';
+    const defaultScope = getDefaultScopeForComponentType(componentType);
+
+    setEditingComponentId(component.id);
+    setEditingComponentType(componentType);
+    setEditingAssembly((component.assembly as AssemblyOption | undefined) ?? defaultScope.assembly);
+    setEditingSubComponent(component.subComponent ?? defaultScope.subComponent);
+    setEditingIdentifiedValue(component.identifiedValue);
+    setEditingAttributes({
+      ...createEmptyAttributes(componentType),
+      ...component.attributes
+    });
+    setEditingNotes(component.notes ?? '');
+  };
+
+  const handleEditingTypeChange = (nextType: ComponentType) => {
+    const defaults = getDefaultScopeForComponentType(nextType);
+    setEditingComponentType(nextType);
+    setEditingAssembly(defaults.assembly);
+    setEditingSubComponent(defaults.subComponent);
+    setEditingAttributes(createEmptyAttributes(nextType));
+  };
+
+  const handleSaveComponentEdit = async () => {
+    clearFeedback();
+
+    if (!currentAggregate || !editingComponentId) {
+      setError('Ingen komponent vald för redigering.');
+      return;
+    }
+
+    if (!editingIdentifiedValue.trim()) {
+      setError('Identifierat värde krävs.');
+      return;
+    }
+
+    if (!editingAssembly.trim()) {
+      setError('Huvudkategori krävs.');
+      return;
+    }
+
+    if (!editingSubComponent.trim()) {
+      setError('Underkategori krävs.');
+      return;
+    }
+
+    const missing = COMPONENT_FIELD_CONFIG[editingComponentType]
+      .filter((field) => !editingAttributes[field.key]?.trim())
+      .map((field) => field.label);
+
+    if (missing.length > 0) {
+      setError(`Fyll i obligatoriska fält: ${missing.join(', ')}.`);
+      return;
+    }
+
+    setIsSavingComponentEdit(true);
+
+    try {
+      const updated = await updateAggregateComponent(currentAggregate.id, editingComponentId, {
+        componentType: editingComponentType,
+        identifiedValue: editingIdentifiedValue.trim(),
+        assembly: editingAssembly,
+        subComponent: editingSubComponent.trim(),
+        attributes: editingAttributes,
+        notes: editingNotes.trim() || undefined
+      });
+
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+      resetComponentEditing();
+      setStatus('Komponent uppdaterad.');
+    } catch (updateError) {
+      setError(`Kunde inte uppdatera komponent: ${String(updateError)}`);
+    } finally {
+      setIsSavingComponentEdit(false);
+    }
+  };
+
+  const handleDeleteComponent = async (componentId: string) => {
+    clearFeedback();
+
+    if (!currentAggregate) {
+      setError('Ingen aktiv aggregatpost vald.');
+      return;
+    }
+
+    const component = currentAggregate.components.find((item) => item.id === componentId);
+    if (!component) {
+      setError('Komponenten hittades inte.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Ta bort komponenten "${component.componentType} (${component.subComponent ?? 'Ingen underkategori'})"?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingComponentId(componentId);
+
+    try {
+      const updated = await deleteAggregateComponent(currentAggregate.id, componentId);
+      setCurrentAggregate(updated);
+      syncAggregateInSearchResults(updated);
+
+      if (editingComponentId === componentId) {
+        resetComponentEditing();
+      }
+
+      setStatus('Komponent borttagen.');
+    } catch (deleteError) {
+      setError(`Kunde inte ta bort komponent: ${String(deleteError)}`);
+    } finally {
+      setDeletingComponentId(null);
+    }
+  };
+
+  const handleDeleteAggregate = async (aggregate: AggregateRecord) => {
+    clearFeedback();
+
+    const confirmed = window.confirm(
+      `Ta bort aggregat "${aggregate.systemPositionId}" inklusive alla komponenter? Detta går inte att ångra.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingAggregateId(aggregate.id);
+
+    try {
+      await deleteAggregate(aggregate.id);
+      setSearchResults((current) => current.filter((item) => item.id !== aggregate.id));
+
+      if (currentAggregate?.id === aggregate.id) {
+        resetAggregateDraft();
+        setStartMethod(null);
+        setMode('sok');
+      }
+
+      setStatus(`Aggregat ${aggregate.systemPositionId} borttaget.`);
+    } catch (deleteError) {
+      setError(`Kunde inte ta bort aggregat: ${String(deleteError)}`);
+    } finally {
+      setDeletingAggregateId(null);
     }
   };
 
@@ -922,6 +1128,15 @@ export default function HomePage() {
                 >
                   {isSavingAggregate ? 'Sparar...' : 'Spara ändringar i aggregat'}
                 </button>
+                <button
+                  className={styles.dangerButton}
+                  onClick={() => currentAggregate && void handleDeleteAggregate(currentAggregate)}
+                  disabled={!currentAggregate || deletingAggregateId === currentAggregate.id}
+                >
+                  {deletingAggregateId === currentAggregate?.id
+                    ? 'Tar bort aggregat...'
+                    : 'Ta bort aggregat'}
+                </button>
               </div>
 
               <div className={styles.libraryHint}>
@@ -1039,20 +1254,149 @@ export default function HomePage() {
 
               {!!currentAggregate?.components.length ? (
                 <ul className={styles.componentList}>
-                  {currentAggregate.components.map((component) => (
-                    <li key={component.id}>
-                      <p>
-                        <strong>{component.componentType}</strong>
-                        {component.assembly ? ` · ${component.assembly}` : ''}
-                        {component.subComponent ? ` / ${component.subComponent}` : ''}: {component.identifiedValue}
-                      </p>
-                      <p>
-                        {Object.entries(component.attributes)
-                          .map(([key, value]) => `${key}: ${value}`)
-                          .join(' · ')}
-                      </p>
-                    </li>
-                  ))}
+                  {currentAggregate.components.map((component) => {
+                    const isEditing = editingComponentId === component.id;
+                    const attributeSummary = Object.entries(component.attributes)
+                      .filter(([, value]) => value?.trim())
+                      .map(([key, value]) => `${key}: ${value}`)
+                      .join(' · ');
+
+                    return (
+                      <li key={component.id}>
+                        <div className={styles.componentItemHeader}>
+                          <p>
+                            <strong>{component.componentType}</strong>
+                            {component.assembly ? ` · ${component.assembly}` : ''}
+                            {component.subComponent ? ` / ${component.subComponent}` : ''}: {component.identifiedValue}
+                          </p>
+
+                          <div className={styles.componentItemActions}>
+                            <button
+                              className={styles.inlineButton}
+                              onClick={() => handleStartEditComponent(component.id)}
+                              disabled={isEditing || deletingComponentId === component.id || isSavingComponentEdit}
+                            >
+                              Redigera
+                            </button>
+                            <button
+                              className={styles.inlineDangerButton}
+                              onClick={() => void handleDeleteComponent(component.id)}
+                              disabled={deletingComponentId === component.id || isSavingComponentEdit}
+                            >
+                              {deletingComponentId === component.id ? 'Tar bort...' : 'Ta bort'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isEditing ? (
+                          <div className={styles.componentEditGrid}>
+                            <label>
+                              Komponenttyp
+                              <select
+                                value={editingComponentType}
+                                onChange={(event) =>
+                                  handleEditingTypeChange(event.target.value as ComponentType)
+                                }
+                              >
+                                {COMPONENT_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label>
+                              Huvudkategori
+                              <select
+                                value={editingAssembly}
+                                onChange={(event) =>
+                                  setEditingAssembly(event.target.value as AssemblyOption)
+                                }
+                              >
+                                {ASSEMBLY_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label>
+                              Underkategori
+                              <input
+                                value={editingSubComponent}
+                                onChange={(event) => setEditingSubComponent(event.target.value)}
+                                list={`editing-subcomponent-${component.id}`}
+                                placeholder='Exempel: Remskiva motorsida'
+                              />
+                              <datalist id={`editing-subcomponent-${component.id}`}>
+                                {editingSubComponentSuggestions.map((option) => (
+                                  <option key={option} value={option} />
+                                ))}
+                              </datalist>
+                            </label>
+
+                            <label>
+                              Identifierat värde
+                              <input
+                                value={editingIdentifiedValue}
+                                onChange={(event) => setEditingIdentifiedValue(event.target.value)}
+                                placeholder='Exempel: SPA 1180, 6205-2RS C3'
+                              />
+                            </label>
+
+                            {COMPONENT_FIELD_CONFIG[editingComponentType].map((field) => (
+                              <label key={field.key}>
+                                {field.label}
+                                <input
+                                  value={editingAttributes[field.key] ?? ''}
+                                  onChange={(event) =>
+                                    setEditingAttributes((current) => ({
+                                      ...current,
+                                      [field.key]: event.target.value
+                                    }))
+                                  }
+                                  placeholder={field.placeholder}
+                                />
+                              </label>
+                            ))}
+
+                            <label className={styles.fullRow}>
+                              Notering
+                              <textarea
+                                value={editingNotes}
+                                onChange={(event) => setEditingNotes(event.target.value)}
+                                placeholder='Valfri notering för komponenten.'
+                              />
+                            </label>
+
+                            <div className={styles.inlineEditActions}>
+                              <button
+                                className={styles.manualSaveButton}
+                                onClick={() => void handleSaveComponentEdit()}
+                                disabled={isSavingComponentEdit || deletingComponentId === component.id}
+                              >
+                                {isSavingComponentEdit ? 'Sparar...' : 'Spara ändring'}
+                              </button>
+                              <button
+                                className={styles.inlineButton}
+                                onClick={resetComponentEditing}
+                                disabled={isSavingComponentEdit}
+                              >
+                                Avbryt
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <p>{attributeSummary || 'Inga attribut angivna.'}</p>
+                            {component.notes && <p>Notering: {component.notes}</p>}
+                          </>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : (
                 <p className={styles.emptyState}>
@@ -1136,12 +1480,21 @@ export default function HomePage() {
                   </div>
                 )}
 
-                <button
-                  className={styles.openButton}
-                  onClick={() => handleOpenAggregateForEditing(aggregate)}
-                >
-                  Öppna för redigering
-                </button>
+                <div className={styles.resultActions}>
+                  <button
+                    className={styles.openButton}
+                    onClick={() => handleOpenAggregateForEditing(aggregate)}
+                  >
+                    Öppna för redigering
+                  </button>
+                  <button
+                    className={styles.deleteButton}
+                    onClick={() => void handleDeleteAggregate(aggregate)}
+                    disabled={deletingAggregateId === aggregate.id}
+                  >
+                    {deletingAggregateId === aggregate.id ? 'Tar bort...' : 'Ta bort aggregat'}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

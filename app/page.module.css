@@ -433,6 +433,24 @@
 
 .aggregateActions {
   margin-top: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.dangerButton {
+  border: 1px solid rgba(251, 113, 133, 0.58);
+  border-radius: 0.75rem;
+  padding: 0.8rem 1rem;
+  background: rgba(159, 18, 57, 0.22);
+  color: #ffe4e6;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dangerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .libraryHint {
@@ -478,6 +496,49 @@
   background: rgba(2, 6, 23, 0.72);
 }
 
+.componentItemHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.componentItemActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.inlineButton,
+.inlineDangerButton,
+.deleteButton {
+  border-radius: 0.6rem;
+  padding: 0.4rem 0.62rem;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.inlineButton {
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  background: rgba(30, 64, 175, 0.18);
+  color: #dbeafe;
+}
+
+.inlineDangerButton,
+.deleteButton {
+  border: 1px solid rgba(251, 113, 133, 0.55);
+  background: rgba(159, 18, 57, 0.22);
+  color: #ffe4e6;
+}
+
+.inlineButton:disabled,
+.inlineDangerButton:disabled,
+.deleteButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .componentList p {
   margin: 0;
   font-size: 0.84rem;
@@ -487,6 +548,48 @@
 .componentList p + p {
   margin-top: 0.24rem;
   color: #b8c6d4;
+}
+
+.componentEditGrid {
+  margin-top: 0.62rem;
+  display: grid;
+  gap: 0.58rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.componentEditGrid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.84rem;
+  color: #dbe5ef;
+}
+
+.componentEditGrid input,
+.componentEditGrid textarea,
+.componentEditGrid select {
+  border-radius: 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  background: rgba(2, 6, 23, 0.85);
+  color: #f8fafc;
+  padding: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.componentEditGrid textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.inlineEditActions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.inlineEditActions .manualSaveButton {
+  margin-top: 0;
 }
 
 .searchCard {
@@ -611,7 +714,6 @@
 }
 
 .openButton {
-  margin-top: 0.6rem;
   border: 1px solid rgba(96, 165, 250, 0.45);
   border-radius: 0.6rem;
   padding: 0.45rem 0.65rem;
@@ -623,6 +725,13 @@
 
 .openButton:hover {
   border-color: rgba(125, 211, 252, 0.6);
+}
+
+.resultActions {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
 }
 
 .emptyState {
@@ -656,6 +765,10 @@
   }
 
   .manualGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .componentEditGrid {
     grid-template-columns: 1fr;
   }
 

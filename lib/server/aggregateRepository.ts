@@ -278,3 +278,96 @@ export async function addComponentToAggregate(
 
   return getAggregateById(aggregateId);
 }
+
+export async function updateComponentInAggregate(
+  aggregateId: string,
+  componentId: string,
+  payload: CreateAggregateComponentPayload
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+
+  const existing = await getAggregateById(aggregateId);
+  if (!existing) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('ventilation_components')
+    .update({
+      component_type: payload.componentType,
+      identified_value: payload.identifiedValue,
+      notes: payload.notes ?? null,
+      assembly: payload.assembly?.trim() || null,
+      sub_component: payload.subComponent?.trim() || null,
+      attributes: payload.attributes ?? {}
+    })
+    .eq('id', componentId)
+    .eq('aggregate_id', aggregateId)
+    .select('id')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  const { error: updateError } = await supabase
+    .from('ventilation_aggregates')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', aggregateId);
+
+  assertNoError(updateError);
+
+  return getAggregateById(aggregateId);
+}
+
+export async function deleteComponentFromAggregate(
+  aggregateId: string,
+  componentId: string
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+
+  const existing = await getAggregateById(aggregateId);
+  if (!existing) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('ventilation_components')
+    .delete()
+    .eq('id', componentId)
+    .eq('aggregate_id', aggregateId)
+    .select('id')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  const { error: updateError } = await supabase
+    .from('ventilation_aggregates')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', aggregateId);
+
+  assertNoError(updateError);
+
+  return getAggregateById(aggregateId);
+}
+
+export async function deleteAggregateRecord(aggregateId: string): Promise<boolean> {
+  const supabase = getSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('ventilation_aggregates')
+    .delete()
+    .eq('id', aggregateId)
+    .select('id')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  return Boolean(data);
+}

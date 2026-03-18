@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import {
+  deleteAggregateRecord,
   getAggregateById,
   updateAggregateRecord
 } from '@/lib/server/aggregateRepository';
@@ -54,6 +55,22 @@ export async function PATCH(request: Request, context: RouteContext) {
   } catch (error) {
     return NextResponse.json(
       { error: `Kunde inte uppdatera aggregat: ${String(error)}` },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  try {
+    const deleted = await deleteAggregateRecord(context.params.id);
+    if (!deleted) {
+      return NextResponse.json({ error: 'Hittades inte.' }, { status: 404 });
+    }
+
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: `Kunde inte ta bort aggregat: ${String(error)}` },
       { status: 500 }
     );
   }
