@@ -159,6 +159,23 @@ function normalizeSystemPositionId(value: string | undefined): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function isUsableDetectedSystemPositionId(value: string): boolean {
+  const normalized = normalizeSystemPositionId(value);
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.length < 4) {
+    return false;
+  }
+
+  if (['MANUELL-KRAVS', 'OKAND', 'UNKNOWN', 'UNK', 'NA', 'N/A'].includes(normalized)) {
+    return false;
+  }
+
+  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+}
+
 function getDefaultScopeForTask(task: CaptureTask): {
   assembly: AssemblyOption;
   subComponent: string;
@@ -592,6 +609,7 @@ export default function HomePage() {
 
     try {
       if (task.id === 'skylt') {
+        setStatus('Bild mottagen. Laser objektskylt med OCR och AI...');
         let analysis: SystemPositionAnalysis;
 
         try {
@@ -608,14 +626,17 @@ export default function HomePage() {
 
         const aiId = normalizeSystemPositionId(analysis.systemPositionId);
         const manualId = normalizeSystemPositionId(systemPositionId);
-        const resolvedId = aiId && aiId !== 'MANUELL-KRAVS' ? aiId : manualId;
+        const aiIdIsUsable =
+          isUsableDetectedSystemPositionId(aiId) && analysis.confidence >= 0.35;
+        const resolvedId = aiIdIsUsable ? aiId : manualId;
 
         if (!resolvedId) {
           throw new Error(
-            'Kunde inte läsa ID från skylten. Ange Systemposition manuellt och ladda upp/fota skylten igen.'
+            'Kunde inte lasa ID fran skylten. Ange systemposition manuellt och prova igen med ny bild.'
           );
         }
 
+        setStatus('Tolkning klar. Sparar aggregat...');
         setSystemPositionId(resolvedId);
 
         const aggregate = currentAggregate
@@ -633,7 +654,7 @@ export default function HomePage() {
         setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
 
         const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
-        const usedManual = !aiId || aiId === 'MANUELL-KRAVS';
+        const usedManual = !aiIdIsUsable;
         setStatus(
           usedManual
             ? `Objektskylt sparad med manuellt ID ${resolvedId}.${analysisNote}`
@@ -655,16 +676,19 @@ export default function HomePage() {
       let identifiedValue = `Ej avläst (${task.label})`;
       let attributes = createEmptyAttributes(task.componentType);
       let note = 'Automatiskt registrerad utan säker AI-tolkning.';
+      setStatus(`Bild mottagen. Laser ${task.label.toLowerCase()} med OCR och AI...`);
 
       try {
         const analysis = await analyzeComponentImage(task.componentType, imageDataUrl);
         identifiedValue = analysis.identifiedValue?.trim() || identifiedValue;
         attributes = normalizeAutoAttributes(task.componentType, analysis.suggestedAttributes);
         note = `Automatiskt registrerad (${toPercent(analysis.confidence)}): ${analysis.notes}`;
-      } catch {
+      } catch (analysisError) {
         attributes = normalizeAutoAttributes(task.componentType, undefined);
+        note = `OCR/AI kunde inte lasa sakert: ${String(analysisError).slice(0, 140)}`;
       }
 
+      setStatus('Tolkning klar. Sparar komponent...');
       const updated = await addAggregateComponent(currentAggregate.id, {
         componentType: task.componentType,
         identifiedValue,
@@ -1116,6 +1140,20 @@ export default function HomePage() {
               Klicka på <strong>Lägg till aggregat</strong> och välj <strong>Fota</strong> eller{' '}
               <strong>Lägg in manuellt</strong>.
             </p>
+            <div className={styles.quickStartActions}>
+              <button
+                className={styles.manualSaveButton}
+                onClick={() => chooseStartMethod('foto')}
+              >
+                Starta med foto
+              </button>
+              <button
+                className={styles.inlineButton}
+                onClick={() => chooseStartMethod('manuell')}
+              >
+                Starta manuellt
+              </button>
+            </div>
           </section>
         ) : (
           <section className={styles.addLayout}>
@@ -1205,13 +1243,22 @@ export default function HomePage() {
                 <div className={styles.libraryHint}>
                   <strong>Manuell start</strong>
                   <p>Fyll i Systemposition i aggregatramen och skapa aggregatet manuellt.</p>
-                  <button
-                    className={styles.manualSaveButton}
-                    onClick={() => void handleCreateAggregateManually()}
-                    disabled={isSavingAggregate || isProcessingCapture}
-                  >
-                    {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
-                  </button>
+                  <div className={styles.quickStartActions}>
+                    <button
+                      className={styles.manualSaveButton}
+                      onClick={() => void handleCreateAggregateManually()}
+                      disabled={isSavingAggregate || isProcessingCapture}
+                    >
+                      {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
+                    </button>
+                    <button
+                      className={styles.inlineButton}
+                      onClick={() => setStartMethod('foto')}
+                      disabled={isSavingAggregate || isProcessingCapture}
+                    >
+                      Byt till foto
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <CameraCapture

@@ -16,8 +16,8 @@ type Props = {
 type FileSource = 'camera' | 'gallery';
 
 const IMAGE_ACCEPT = 'image/*,image/heic,image/heif';
-const MAX_IMAGE_DIMENSION = 1600;
-const MAX_IMAGE_BYTES = 2_400_000;
+const MAX_IMAGE_DIMENSION = 2200;
+const MAX_IMAGE_BYTES = 4_500_000;
 const MAX_RAW_FILE_BYTES = 18_000_000;
 
 function estimateDataUrlBytes(dataUrl: string): number {
@@ -54,11 +54,11 @@ function fitWithinBounds(
 function encodeCanvasToJpeg(canvas: HTMLCanvasElement, maxBytes: number): string {
   const encodeAtQuality = (quality: number) => canvas.toDataURL('image/jpeg', quality);
 
-  let quality = 0.88;
+  let quality = 0.94;
   let output = encodeAtQuality(quality);
 
-  while (estimateDataUrlBytes(output) > maxBytes && quality > 0.5) {
-    quality -= 0.08;
+  while (estimateDataUrlBytes(output) > maxBytes && quality > 0.62) {
+    quality -= 0.06;
     output = encodeAtQuality(quality);
   }
 
@@ -69,8 +69,8 @@ function encodeCanvasToJpeg(canvas: HTMLCanvasElement, maxBytes: number): string
   let workingCanvas = canvas;
 
   for (let i = 0; i < 4; i += 1) {
-    const nextWidth = Math.max(1, Math.round(workingCanvas.width * 0.82));
-    const nextHeight = Math.max(1, Math.round(workingCanvas.height * 0.82));
+    const nextWidth = Math.max(1, Math.round(workingCanvas.width * 0.9));
+    const nextHeight = Math.max(1, Math.round(workingCanvas.height * 0.9));
 
     if (nextWidth === workingCanvas.width && nextHeight === workingCanvas.height) {
       break;
@@ -88,11 +88,11 @@ function encodeCanvasToJpeg(canvas: HTMLCanvasElement, maxBytes: number): string
     ctx.drawImage(workingCanvas, 0, 0, nextWidth, nextHeight);
     workingCanvas = resized;
 
-    quality = 0.84;
+    quality = 0.9;
     output = workingCanvas.toDataURL('image/jpeg', quality);
 
-    while (estimateDataUrlBytes(output) > maxBytes && quality > 0.45) {
-      quality -= 0.08;
+    while (estimateDataUrlBytes(output) > maxBytes && quality > 0.6) {
+      quality -= 0.06;
       output = workingCanvas.toDataURL('image/jpeg', quality);
     }
 
@@ -146,6 +146,10 @@ function toUserErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message.trim() : '';
   if (!message) {
     return 'Kunde inte hantera bilden. Prova igen med ett nytt foto.';
+  }
+
+  if (/gemini-fel \\(429\\)|resource_exhausted|quota exceeded/i.test(message)) {
+    return 'OCR/AI-kvot tillfalligt slut. Vanta en stund eller komplettera manuellt.';
   }
 
   if (/quota|resource_exhausted|429|rate/i.test(message)) {
@@ -355,7 +359,7 @@ export function CameraCapture({
 
       {isSubmitting && (
         <p style={{ margin: '0.45rem 0 0', color: '#67e8f9', fontSize: '0.82rem' }}>
-          Sparar bild...
+          Bearbetar bild med OCR och AI...
         </p>
       )}
 
