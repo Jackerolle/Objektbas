@@ -1,5 +1,9 @@
-﻿import { NextResponse } from 'next/server';
-import { getAggregateById } from '@/lib/server/aggregateRepository';
+import { NextResponse } from 'next/server';
+import {
+  getAggregateById,
+  updateAggregateRecord
+} from '@/lib/server/aggregateRepository';
+import { CreateAggregatePayload } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +25,35 @@ export async function GET(_request: Request, context: RouteContext) {
   } catch (error) {
     return NextResponse.json(
       { error: `Kunde inte hämta aggregat: ${String(error)}` },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  try {
+    const payload = (await request.json()) as CreateAggregatePayload;
+
+    if (!payload.systemPositionId?.trim()) {
+      return NextResponse.json(
+        { error: 'Systempositionens ID krävs.' },
+        { status: 400 }
+      );
+    }
+
+    const updated = await updateAggregateRecord(context.params.id, {
+      ...payload,
+      systemPositionId: payload.systemPositionId.trim()
+    });
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Hittades inte.' }, { status: 404 });
+    }
+
+    return NextResponse.json(updated);
+  } catch (error) {
+    return NextResponse.json(
+      { error: `Kunde inte uppdatera aggregat: ${String(error)}` },
       { status: 500 }
     );
   }

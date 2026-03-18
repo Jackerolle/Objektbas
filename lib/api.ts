@@ -132,6 +132,23 @@ export async function addAggregateComponent(
   return (await response.json()) as AggregateRecord;
 }
 
+export async function updateAggregate(
+  aggregateId: string,
+  payload: CreateAggregatePayload
+): Promise<AggregateRecord> {
+  const response = await fetch(toApiUrl(`/api/aggregates/${aggregateId}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as AggregateRecord;
+}
+
 export async function searchAggregates(query: string): Promise<AggregateRecord[]> {
   const params = new URLSearchParams();
   if (query.trim()) {

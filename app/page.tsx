@@ -6,7 +6,8 @@ import {
   analyzeComponentImage,
   analyzeSystemPosition,
   createAggregate,
-  searchAggregates
+  searchAggregates,
+  updateAggregate
 } from '@/lib/api';
 import {
   COMPONENT_FIELD_CONFIG,
@@ -40,36 +41,32 @@ const CAPTURE_TASKS: CaptureTask[] = [
   {
     id: 'skylt',
     label: 'Objektskylt',
-    description: 'Läs system-ID och skapa aggregatet.',
+    description: 'Steg 1: läs system-ID och skapa aggregat.',
     required: true
   },
   {
     id: 'kilrem',
     label: 'Kilrem',
     description: 'Profil, längd och antal remmar.',
-    componentType: 'Kilrem',
-    required: true
+    componentType: 'Kilrem'
   },
   {
     id: 'filter',
     label: 'Filter',
     description: 'Filterklass och dimension.',
-    componentType: 'Filter',
-    required: true
+    componentType: 'Filter'
   },
   {
     id: 'remskiva',
     label: 'Remskiva',
     description: 'Driv- och medremskiva med spår.',
-    componentType: 'Remskiva',
-    required: true
+    componentType: 'Remskiva'
   },
   {
     id: 'lager',
     label: 'Lager',
     description: 'Lagertyp, placering och antal.',
-    componentType: 'Lager',
-    required: true
+    componentType: 'Lager'
   },
   {
     id: 'motor',
@@ -137,6 +134,7 @@ export default function HomePage() {
   const [aggregateNotes, setAggregateNotes] = useState('');
 
   const [currentAggregate, setCurrentAggregate] = useState<AggregateRecord | null>(null);
+  const [isSavingAggregate, setIsSavingAggregate] = useState(false);
 
   const [manualComponentType, setManualComponentType] = useState<ComponentType>('Kilrem');
   const [manualValue, setManualValue] = useState('');
@@ -203,6 +201,14 @@ export default function HomePage() {
     setStatus('');
   };
 
+  const buildAggregatePayload = (systemId: string, imageDataUrl?: string) => ({
+    systemPositionId: systemId.trim(),
+    position: position.trim() || undefined,
+    department: department.trim() || undefined,
+    notes: aggregateNotes.trim() || undefined,
+    systemPositionImageDataUrl: imageDataUrl
+  });
+
   const handleTaskSelection = (taskId: string) => {
     const task = findTask(taskId);
     if (!aggregateReady && task.id !== 'skylt') {
@@ -226,13 +232,9 @@ export default function HomePage() {
       throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
     }
 
-    const created = await createAggregate({
-      systemPositionId: candidateId,
-      position: position.trim() || undefined,
-      department: department.trim() || undefined,
-      notes: aggregateNotes.trim() || undefined,
-      systemPositionImageDataUrl: objectPhotoDataUrl
-    });
+    const created = await createAggregate(
+      buildAggregatePayload(candidateId, objectPhotoDataUrl)
+    );
 
     setCurrentAggregate(created);
     setSystemPositionId(created.systemPositionId);
@@ -274,7 +276,15 @@ export default function HomePage() {
         }
 
         setSystemPositionId(resolvedId);
-        await ensureAggregate(imageDataUrl, resolvedId);
+
+        const aggregate = currentAggregate
+          ? await updateAggregate(
+              currentAggregate.id,
+              buildAggregatePayload(resolvedId, imageDataUrl)
+            )
+          : await ensureAggregate(imageDataUrl, resolvedId);
+
+        setCurrentAggregate(aggregate);
         const nextCaptured = { ...capturedPhotos, skylt: imageDataUrl };
         setCapturedPhotos(nextCaptured);
         setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
@@ -282,12 +292,12 @@ export default function HomePage() {
         setStatus(
           `Objektskylt tolkad (${toPercent(
             analysis.confidence
-          )}) och aggregat skapat. Fortsätt med komponentfoton.`
+          )}) och aggregat sparat. Fortsätt med komponentfoton.`
         );
         return;
       }
 
-      if (!aggregateReady || !currentAggregate || !capturedPhotos.skylt) {
+      if (!aggregateReady || !currentAggregate) {
         throw new Error('Objektskylt måste registreras först för att skapa aggregat.');
       }
 
@@ -320,12 +330,62 @@ export default function HomePage() {
       setCapturedPhotos(nextCaptured);
       setCurrentAggregate(updated);
       setSelectedTaskId(getNextTaskId(task.id, nextCaptured));
-      setStatus(`${task.label} tolkad och sparad automatiskt i biblioteket.`);
+      setStatus(`${task.label} sparad i aggregatet.`);
     } catch (captureError) {
       setError(`Kunde inte slutföra ${task.label.toLowerCase()}: ${String(captureError)}`);
     } finally {
       setIsProcessingCapture(false);
     }
+  };
+
+  const handleSaveAggregateChanges = async () => {
+    clearFeedback();
+
+    if (!currentAggregate) {
+      setError('Ingen aktiv aggregatpost att uppdatera.');
+      return;
+    }
+
+    if (!systemPositionId.trim()) {
+      setError('Systemposition krävs.');
+      return;
+    }
+
+    setIsSavingAggregate(true);
+
+    try {
+      const updated = await updateAggregate(
+        currentAggregate.id,
+        buildAggregatePayload(
+          systemPositionId,
+          currentAggregate.systemPositionImageDataUrl
+        )
+      );
+
+      setCurrentAggregate(updated);
+      setStatus('Aggregat uppdaterat.');
+    } catch (saveError) {
+      setError(`Kunde inte uppdatera aggregat: ${String(saveError)}`);
+    } finally {
+      setIsSavingAggregate(false);
+    }
+  };
+
+  const handleOpenAggregateForEditing = (aggregate: AggregateRecord) => {
+    setCurrentAggregate(aggregate);
+    setSystemPositionId(aggregate.systemPositionId);
+    setDepartment(aggregate.department ?? '');
+    setPosition(aggregate.position ?? '');
+    setAggregateNotes(aggregate.notes ?? '');
+    setCapturedPhotos((current) => ({
+      ...current,
+      ...(aggregate.systemPositionImageDataUrl
+        ? { skylt: aggregate.systemPositionImageDataUrl }
+        : {})
+    }));
+    setSelectedTaskId('kilrem');
+    setMode('lagg-till');
+    setStatus(`Öppnade aggregat ${aggregate.systemPositionId} för redigering.`);
   };
 
   const handleManualTypeChange = (nextType: ComponentType) => {
@@ -387,8 +447,8 @@ export default function HomePage() {
         <p className={styles.heroKicker}>Objektbas · Ventilation</p>
         <h1 className={styles.heroTitle}>Enkel dokumentation med foto först</h1>
         <p className={styles.heroText}>
-          Flödet är byggt för fältarbete: objektskylt först för att skapa aggregat,
-          därefter komponentfoton som tolkas och sparas automatiskt i ett sökbart bibliotek.
+          Objektskylt är enda obligatoriska steg. Därefter kan du lägga till och
+          redigera komponenter utan dubletter i samma aggregat.
         </p>
 
         <div className={styles.modeSwitch}>
@@ -476,8 +536,8 @@ export default function HomePage() {
                 uploadLabel='Ladda upp foto'
                 helperText={
                   selectedTask.id === 'skylt'
-                    ? 'Du kan fota live eller ladda upp en bild. Detta steg skapar aggregatet.'
-                    : 'Bild tolkas och sparas automatiskt. Vid behov kan du komplettera manuellt nedan.'
+                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat.'
+                    : 'Sparas i befintligt aggregat. Samma komponenttyp uppdateras istället för att dubblas.'
                 }
                 disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
               />
@@ -544,11 +604,21 @@ export default function HomePage() {
                 </label>
               </div>
 
+              <div className={styles.aggregateActions}>
+                <button
+                  className={styles.manualSaveButton}
+                  onClick={handleSaveAggregateChanges}
+                  disabled={!currentAggregate || isSavingAggregate}
+                >
+                  {isSavingAggregate ? 'Sparar...' : 'Spara ändringar i aggregat'}
+                </button>
+              </div>
+
               <div className={styles.libraryHint}>
                 <strong>Regel i flödet:</strong>
                 <p>
-                  Objektskylt är alltid steg 1. När aggregatet är skapat låses
-                  komponentfotografering upp och varje bild sparas direkt i biblioteket.
+                  Endast objektskylt är obligatorisk. När aggregatet finns kan du
+                  återkomma senare, uppdatera metadata och lägga till/ändra komponenter.
                 </p>
               </div>
             </article>
@@ -713,6 +783,13 @@ export default function HomePage() {
                     ))}
                   </div>
                 )}
+
+                <button
+                  className={styles.openButton}
+                  onClick={() => handleOpenAggregateForEditing(aggregate)}
+                >
+                  Öppna för redigering
+                </button>
               </li>
             ))}
           </ul>

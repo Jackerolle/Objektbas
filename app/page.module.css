@@ -361,6 +361,10 @@
   cursor: not-allowed;
 }
 
+.aggregateActions {
+  margin-top: 0.85rem;
+}
+
 .libraryHint {
   margin-top: 0.75rem;
   border: 1px solid rgba(20, 184, 166, 0.32);
@@ -497,6 +501,21 @@
   background: rgba(20, 184, 166, 0.17);
   color: #8bf2e4;
   border: 1px solid rgba(20, 184, 166, 0.3);
+}
+
+.openButton {
+  margin-top: 0.6rem;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.65rem;
+  background: rgba(30, 64, 175, 0.18);
+  color: #dbeafe;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.openButton:hover {
+  border-color: rgba(125, 211, 252, 0.6);
 }
 
 .emptyState {

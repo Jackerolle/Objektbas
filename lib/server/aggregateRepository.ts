@@ -1,4 +1,4 @@
-﻿import {
+import {
   AggregateRecord,
   CreateAggregateComponentPayload,
   CreateAggregatePayload
@@ -187,6 +187,36 @@ export async function createAggregateRecord(
   return mapAggregate(data as AggregateRow, []);
 }
 
+export async function updateAggregateRecord(
+  aggregateId: string,
+  payload: CreateAggregatePayload
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('ventilation_aggregates')
+    .update({
+      system_position_id: payload.systemPositionId,
+      position: payload.position ?? null,
+      department: payload.department ?? null,
+      notes: payload.notes ?? null,
+      system_position_image_data_url: payload.systemPositionImageDataUrl ?? null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', aggregateId)
+    .select('*')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  const componentMap = await loadComponentsByAggregateIds([aggregateId]);
+  return mapAggregate(data as AggregateRow, componentMap.get(aggregateId) ?? []);
+}
+
 export async function addComponentToAggregate(
   aggregateId: string,
   payload: CreateAggregateComponentPayload
@@ -198,18 +228,43 @@ export async function addComponentToAggregate(
     return null;
   }
 
-  const { error: insertError } = await supabase
+  const { data: existingComponent, error: existingComponentError } = await supabase
     .from('ventilation_components')
-    .insert({
-      aggregate_id: aggregateId,
-      component_type: payload.componentType,
-      identified_value: payload.identifiedValue,
-      notes: payload.notes ?? null,
-      image_data_url: payload.imageDataUrl ?? null,
-      attributes: payload.attributes ?? {}
-    });
+    .select('id')
+    .eq('aggregate_id', aggregateId)
+    .eq('component_type', payload.componentType)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  assertNoError(insertError);
+  assertNoError(existingComponentError);
+
+  if (existingComponent?.id) {
+    const { error: updateComponentError } = await supabase
+      .from('ventilation_components')
+      .update({
+        identified_value: payload.identifiedValue,
+        notes: payload.notes ?? null,
+        image_data_url: payload.imageDataUrl ?? null,
+        attributes: payload.attributes ?? {}
+      })
+      .eq('id', existingComponent.id);
+
+    assertNoError(updateComponentError);
+  } else {
+    const { error: insertError } = await supabase
+      .from('ventilation_components')
+      .insert({
+        aggregate_id: aggregateId,
+        component_type: payload.componentType,
+        identified_value: payload.identifiedValue,
+        notes: payload.notes ?? null,
+        image_data_url: payload.imageDataUrl ?? null,
+        attributes: payload.attributes ?? {}
+      });
+
+    assertNoError(insertError);
+  }
 
   const { error: updateError } = await supabase
     .from('ventilation_aggregates')

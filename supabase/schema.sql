@@ -1,4 +1,4 @@
-﻿-- Supabase schema for Objektbas ventilation flow
+-- Supabase schema for Objektbas ventilation flow
 -- Run in Supabase SQL editor or as migration.
 
 create extension if not exists pgcrypto;
@@ -36,6 +36,9 @@ create index if not exists idx_vent_components_aggregate_id
 
 create index if not exists idx_vent_components_type
   on public.ventilation_components(component_type);
+
+create unique index if not exists idx_vent_components_unique_per_type
+  on public.ventilation_components(aggregate_id, component_type);
 
 create index if not exists idx_vent_components_attributes_gin
   on public.ventilation_components using gin (attributes);

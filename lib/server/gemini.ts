@@ -16,6 +16,30 @@ type GeminiTextJson = {
   suggestedAttributes?: Record<string, unknown>;
 };
 
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isQuotaError(error: unknown): boolean {
+  const message = toErrorMessage(error).toLowerCase();
+  return (
+    message.includes('429') ||
+    message.includes('resource_exhausted') ||
+    message.includes('quota exceeded')
+  );
+}
+
+function conciseErrorSuffix(error: unknown): string {
+  const message = toErrorMessage(error);
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  const short = normalized.slice(0, 140);
+  return short ? ` (${short}${normalized.length > 140 ? '...' : ''})` : '';
+}
+
 function getGeminiConfig() {
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
@@ -163,16 +187,30 @@ export async function analyzeSystemPositionWithGemini(
     'Du är OCR-assistent. Läs endast systempositionens ID från bilden. ' +
     'Returnera ENDAST JSON med fälten systemPositionId, confidence och notes. Inga markdown-block.';
 
-  const parsed = await callGemini(prompt, imageDataUrl);
-  const systemPositionId = sanitizeSystemPositionId(parsed.systemPositionId) || 'OKAND';
+  try {
+    const parsed = await callGemini(prompt, imageDataUrl);
+    const systemPositionId = sanitizeSystemPositionId(parsed.systemPositionId) || 'OKAND';
 
-  return {
-    systemPositionId,
-    confidence: clampConfidence(parsed.confidence),
-    notes: parsed.notes?.trim() || 'Kontrollera ID innan du sparar.',
-    provider: 'gemini',
-    requiresManualConfirmation: true
-  };
+    return {
+      systemPositionId,
+      confidence: clampConfidence(parsed.confidence),
+      notes: parsed.notes?.trim() || 'Kontrollera ID innan du sparar.',
+      provider: 'gemini',
+      requiresManualConfirmation: true
+    };
+  } catch (error) {
+    const quotaText = isQuotaError(error)
+      ? 'Gemini-kvot nådd. Ange ID manuellt.'
+      : 'Gemini-fel. Ange ID manuellt.';
+
+    return {
+      systemPositionId: 'MANUELL-KRAVS',
+      confidence: 0.12,
+      notes: `${quotaText}${conciseErrorSuffix(error)}`,
+      provider: 'fallback',
+      requiresManualConfirmation: true
+    };
+  }
 }
 
 export async function analyzeComponentWithGemini(
@@ -205,20 +243,36 @@ export async function analyzeComponentWithGemini(
     'Returnera ENDAST JSON med fälten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
     'suggestedAttributes ska vara ett objekt med nyckel/värde. Inga markdown-block.';
 
-  const parsed = await callGemini(prompt, imageDataUrl);
+  try {
+    const parsed = await callGemini(prompt, imageDataUrl);
 
-  const suggestedAttributes = {
-    ...createEmptyAttributes(componentType),
-    ...normalizeAttributes(parsed.suggestedAttributes)
-  };
+    const suggestedAttributes = {
+      ...createEmptyAttributes(componentType),
+      ...normalizeAttributes(parsed.suggestedAttributes)
+    };
 
-  return {
-    componentType,
-    identifiedValue: parsed.identifiedValue?.trim() || `Okänd ${componentType}`,
-    confidence: clampConfidence(parsed.confidence),
-    notes: parsed.notes?.trim() || 'Bekräfta komponentdata innan sparning.',
-    provider: 'gemini',
-    requiresManualConfirmation: true,
-    suggestedAttributes
-  };
+    return {
+      componentType,
+      identifiedValue: parsed.identifiedValue?.trim() || `Okänd ${componentType}`,
+      confidence: clampConfidence(parsed.confidence),
+      notes: parsed.notes?.trim() || 'Bekräfta komponentdata innan sparning.',
+      provider: 'gemini',
+      requiresManualConfirmation: true,
+      suggestedAttributes
+    };
+  } catch (error) {
+    const quotaText = isQuotaError(error)
+      ? 'Gemini-kvot nådd. Kontrollera värden manuellt.'
+      : 'Gemini-fel. Kontrollera värden manuellt.';
+
+    return {
+      componentType,
+      identifiedValue: `Manuell avläsning: ${componentType}`,
+      confidence: 0.1,
+      notes: `${quotaText}${conciseErrorSuffix(error)}`,
+      provider: 'fallback',
+      requiresManualConfirmation: true,
+      suggestedAttributes: createEmptyAttributes(componentType)
+    };
+  }
 }
