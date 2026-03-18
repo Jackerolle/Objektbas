@@ -103,37 +103,89 @@ function isLikelySystemPositionId(value: string): boolean {
   return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
 }
 
-function extractSystemPositionFromText(rawText: string): string {
-  const normalizedWords = rawText
-    .toUpperCase()
-    .replace(/[^A-Z0-9\-\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => sanitizeSystemPositionId(word));
+function scoreSystemPositionCandidate(value: string): number {
+  const candidate = sanitizeSystemPositionId(value);
+  if (!isLikelySystemPositionId(candidate)) {
+    return -1;
+  }
 
+  let score = 0;
+
+  if (/^\d{2,6}[A-Z]{1,4}\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
+    score += 9;
+  }
+
+  if (/^[A-Z]{1,6}-?\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
+    score += 7;
+  }
+
+  if (candidate.includes('-')) {
+    score += 2;
+  }
+
+  if (candidate.length >= 6 && candidate.length <= 12) {
+    score += 3;
+  } else if (candidate.length >= 4 && candidate.length <= 16) {
+    score += 1;
+  }
+
+  const transitions = candidate.match(/[0-9][A-Z]|[A-Z][0-9]/g)?.length ?? 0;
+  score += Math.min(3, transitions);
+
+  return score;
+}
+
+function extractSystemPositionFromText(rawText: string): string {
   let best = '';
   let bestScore = -1;
 
-  for (const candidate of normalizedWords) {
-    if (!isLikelySystemPositionId(candidate)) {
-      continue;
+  const evaluate = (candidate: string, bonus = 0) => {
+    const normalized = sanitizeSystemPositionId(candidate);
+    if (!normalized || normalized.length > 18) {
+      return;
     }
 
-    let score = 0;
-    if (candidate.includes('-')) {
-      score += 3;
-    }
-    if (/^[A-Z]{1,6}-?[0-9]{2,8}[A-Z0-9-]*$/.test(candidate)) {
-      score += 4;
-    }
-    if (candidate.length >= 6 && candidate.length <= 14) {
-      score += 2;
+    const baseScore = scoreSystemPositionCandidate(normalized);
+    if (baseScore < 0) {
+      return;
     }
 
-    if (score > bestScore) {
+    const score = baseScore + bonus;
+    if (score > bestScore || (score === bestScore && normalized.length > best.length)) {
       bestScore = score;
-      best = candidate;
+      best = normalized;
     }
+  };
+
+  const lines = rawText
+    .toUpperCase()
+    .split(/\r?\n/g)
+    .map((line) => line.replace(/[^A-Z0-9\-\s]/g, ' ').trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const words = line
+      .split(/\s+/)
+      .map((word) => sanitizeSystemPositionId(word))
+      .filter(Boolean);
+
+    for (const word of words) {
+      evaluate(word);
+    }
+
+    for (let i = 0; i < words.length; i += 1) {
+      for (let size = 2; size <= 3; size += 1) {
+        const slice = words.slice(i, i + size);
+        if (slice.length !== size) {
+          continue;
+        }
+
+        evaluate(slice.join(''), 2);
+        evaluate(slice.join('-'), 1);
+      }
+    }
+
+    evaluate(words.join(''), 1);
   }
 
   return best;
@@ -202,6 +254,33 @@ function parseGeminiJson(raw: string): GeminiTextJson {
   }
 }
 
+function summarizeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, ' ').trim().slice(0, 240);
+}
+
+function isQuotaError(error: unknown): boolean {
+  const message = summarizeError(error).toLowerCase();
+  return (
+    message.includes('quota') ||
+    message.includes('resource_exhausted') ||
+    message.includes('429') ||
+    message.includes('rate limit')
+  );
+}
+
+async function callGeminiTextNonEmpty(
+  prompt: string,
+  imageDataUrl: string
+): Promise<string> {
+  const text = await callGeminiText(prompt, imageDataUrl);
+  if (!text.trim()) {
+    throw new Error('Gemini returnerade tom OCR-text.');
+  }
+
+  return text;
+}
+
 async function requestGeminiText(
   prompt: string,
   imageDataUrl: string,
@@ -254,6 +333,8 @@ async function callGeminiJson(prompt: string, imageDataUrl: string): Promise<Gem
       if (Object.keys(parsed).length > 0) {
         return parsed;
       }
+
+      lastError = new Error(`Tomt eller ogiltigt JSON-svar fran Gemini-modell ${model}.`);
     } catch (error) {
       lastError = error;
 
@@ -268,7 +349,7 @@ async function callGeminiJson(prompt: string, imageDataUrl: string): Promise<Gem
     throw lastError;
   }
 
-  return {};
+  throw new Error('Gemini returnerade inget JSON-svar.');
 }
 
 async function callGeminiText(prompt: string, imageDataUrl: string): Promise<string> {
@@ -300,10 +381,21 @@ async function callGeminiText(prompt: string, imageDataUrl: string): Promise<str
 
 async function transcribeImageWithGemini(imageDataUrl: string): Promise<string> {
   const prompt =
-    'Transkribera all tydlig text i bilden rad-for-rad. Returnera bara text utan forklaringar.';
+    'Transkribera all tydlig text i bilden rad-for-rad. Behall bokstaver och siffror exakt, inklusive separata block som "408 FL205". Returnera bara text utan forklaringar.';
 
-  const text = await callGeminiText(prompt, imageDataUrl);
+  const text = await callGeminiTextNonEmpty(prompt, imageDataUrl);
   return text.slice(0, 2000);
+}
+
+async function extractSystemPositionDirectWithGemini(
+  imageDataUrl: string
+): Promise<string> {
+  const prompt =
+    'Las objektskylten och returnera ENDAST systemPositionId som en token utan extra text. ' +
+    'Tillat format som 408FL205, VP-1024, AHU12. Om osaker, returnera MANUELL-KRAVS.';
+
+  const text = await callGeminiTextNonEmpty(prompt, imageDataUrl);
+  return extractSystemPositionFromText(text);
 }
 
 export async function analyzeSystemPositionWithGemini(
@@ -321,18 +413,40 @@ export async function analyzeSystemPositionWithGemini(
     };
   }
 
-  const ocrText = await transcribeImageWithGemini(imageDataUrl).catch(() => '');
+  let ocrText = '';
+  let ocrError = '';
+  try {
+    ocrText = await transcribeImageWithGemini(imageDataUrl);
+  } catch (error) {
+    ocrError = summarizeError(error);
+  }
+
   const ocrCandidate = extractSystemPositionFromText(ocrText);
+
+  let directCandidate = '';
+  let directError = '';
+  if (!isLikelySystemPositionId(ocrCandidate)) {
+    try {
+      directCandidate = await extractSystemPositionDirectWithGemini(imageDataUrl);
+    } catch (error) {
+      directError = summarizeError(error);
+    }
+  }
 
   const prompt =
     'Du ar OCR-assistent for objektskyltar. Returnera ENDAST JSON med falten systemPositionId, confidence och notes. ' +
-    'Om osakert: systemPositionId = "MANUELL-KRAVS". ' +
+    'Om osakert: systemPositionId = "MANUELL-KRAVS". Prioritera stora ID-koder pa skylten (exempel: 408FL205, VP-1024). Om OCR visar "408 FL205", kombinera till "408FL205". ' +
     `OCR-text (kan innehalla fel): ${ocrText || 'saknas'}`;
 
-  const parsed = await callGeminiJson(prompt, imageDataUrl).catch(
-    () => ({}) as GeminiTextJson
-  );
+  let parsed = {} as GeminiTextJson;
+  let jsonError = '';
+  try {
+    parsed = await callGeminiJson(prompt, imageDataUrl);
+  } catch (error) {
+    jsonError = summarizeError(error);
+  }
   const geminiCandidate = sanitizeSystemPositionId(parsed.systemPositionId);
+  const directNormalized = sanitizeSystemPositionId(directCandidate);
 
   let finalId = '';
   let confidence = clampConfidence(parsed.confidence);
@@ -340,6 +454,10 @@ export async function analyzeSystemPositionWithGemini(
 
   if (isLikelySystemPositionId(geminiCandidate)) {
     finalId = geminiCandidate;
+  } else if (isLikelySystemPositionId(directNormalized)) {
+    finalId = directNormalized;
+    confidence = Math.max(0.58, confidence);
+    source = 'direct-fallback';
   } else if (isLikelySystemPositionId(ocrCandidate)) {
     finalId = ocrCandidate;
     confidence = Math.max(0.62, confidence);
@@ -350,9 +468,50 @@ export async function analyzeSystemPositionWithGemini(
     source = 'fallback';
   }
 
-  const noteParts = [parsed.notes?.trim() || 'Kontrollera ID innan du sparar.'];
+  const noteParts: string[] = [];
+  if (parsed.notes?.trim()) {
+    noteParts.push(parsed.notes.trim());
+  }
+  if (ocrError) {
+    noteParts.push(`OCR-fel: ${ocrError}`);
+  }
+  if (directError) {
+    noteParts.push(`Direkt-ID-fel: ${directError}`);
+  }
+  if (jsonError) {
+    noteParts.push(`JSON-fel: ${jsonError}`);
+  }
+  if (ocrCandidate) {
+    noteParts.push(`OCR-kandidat: ${ocrCandidate}`);
+  }
+  if (directNormalized) {
+    noteParts.push(`Direkt-kandidat: ${directNormalized}`);
+  }
   if (ocrText) {
     noteParts.push(`OCR: ${ocrText.slice(0, 160)}`);
+  }
+  if (!noteParts.length) {
+    noteParts.push('Kontrollera ID innan du sparar.');
+  }
+  if (
+    noteParts.length === 1 &&
+    noteParts[0] === 'Kontrollera ID innan du sparar.' &&
+    (isQuotaError(ocrError) || isQuotaError(jsonError) || isQuotaError(directError))
+  ) {
+    noteParts[0] = 'Gemini kvot/rate-limit blockerade avlasningen. Ange ID manuellt tills kvoten ater ar tillganglig.';
+  }
+
+  if (finalId === 'MANUELL-KRAVS') {
+    console.warn('[systemposition] ID detection fallback', {
+      source,
+      ocrError,
+      directError,
+      jsonError,
+      ocrCandidate,
+      directCandidate: directNormalized,
+      geminiCandidate,
+      ocrTextPreview: ocrText.slice(0, 120)
+    });
   }
 
   return {

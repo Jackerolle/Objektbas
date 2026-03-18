@@ -176,6 +176,55 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
   return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
 }
 
+function extractSystemPositionCandidateFromText(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+
+  const words = value
+    .toUpperCase()
+    .replace(/[^A-Z0-9\-\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => normalizeSystemPositionId(word))
+    .filter(Boolean);
+
+  let best = '';
+  let bestScore = -1;
+
+  const evaluate = (candidate: string, bonus = 0) => {
+    if (!isUsableDetectedSystemPositionId(candidate)) {
+      return;
+    }
+
+    let score = bonus;
+    if (/^\d{2,6}[A-Z]{1,4}\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
+      score += 7;
+    }
+    if (/^[A-Z]{1,6}-?\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
+      score += 5;
+    }
+    if (candidate.length >= 6 && candidate.length <= 12) {
+      score += 2;
+    }
+
+    if (score > bestScore || (score === bestScore && candidate.length > best.length)) {
+      bestScore = score;
+      best = candidate;
+    }
+  };
+
+  for (const word of words) {
+    evaluate(word);
+  }
+
+  for (let i = 0; i < words.length - 1; i += 1) {
+    evaluate(normalizeSystemPositionId(`${words[i]}${words[i + 1]}`), 2);
+  }
+
+  return best;
+}
+
 function getDefaultScopeForTask(task: CaptureTask): {
   assembly: AssemblyOption;
   subComponent: string;
@@ -634,14 +683,21 @@ export default function HomePage() {
         }
 
         const aiId = normalizeSystemPositionId(analysis.systemPositionId);
+        const noteId = extractSystemPositionCandidateFromText(analysis.notes);
         const manualId = normalizeSystemPositionId(systemPositionId);
-        const aiIdIsUsable =
-          isUsableDetectedSystemPositionId(aiId) && analysis.confidence >= 0.35;
-        const resolvedId = aiIdIsUsable ? aiId : manualId;
+        const aiIdIsUsable = isUsableDetectedSystemPositionId(aiId);
+        const noteIdIsUsable = isUsableDetectedSystemPositionId(noteId);
+        const highConfidenceAi = aiIdIsUsable && analysis.confidence >= 0.35;
+        const resolvedId = highConfidenceAi
+          ? aiId
+          : manualId || (aiIdIsUsable ? aiId : noteIdIsUsable ? noteId : '');
 
         if (!resolvedId) {
+          const reason = analysis.notes?.trim()
+            ? ` Detektering: ${analysis.notes.trim().slice(0, 180)}`
+            : '';
           throw new Error(
-            'Kunde inte lasa ID fran skylten. Ange systemposition manuellt och prova igen med ny bild.'
+            `Kunde inte lasa ID fran skylten. Ange systemposition manuellt och prova igen med ny bild.${reason}`
           );
         }
 
@@ -663,10 +719,15 @@ export default function HomePage() {
         setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
 
         const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
-        const usedManual = !aiIdIsUsable;
+        const usedManual = Boolean(manualId) && resolvedId === manualId && !highConfidenceAi;
+        const usedLowConfidenceAi = resolvedId === aiId && aiIdIsUsable && !highConfidenceAi;
         setStatus(
           usedManual
             ? `Objektskylt sparad med manuellt ID ${resolvedId}.${analysisNote}`
+            : usedLowConfidenceAi
+              ? `Objektskylt tolkad med lagre sakerhet (${toPercent(
+                  analysis.confidence
+                )}) och sparad som ${resolvedId}. Bekrafta ID.${analysisNote}`
             : `Objektskylt tolkad (${toPercent(
                 analysis.confidence
               )}) och aggregat sparat. Fortsätt med komponentfoton.${analysisNote}`
