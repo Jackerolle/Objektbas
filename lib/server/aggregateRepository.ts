@@ -1,4 +1,4 @@
-﻿import {
+import {
   AggregateRecord,
   CreateAggregateComponentPayload,
   CreateAggregatePayload
@@ -11,7 +11,6 @@ type AggregateRow = {
   position: string | null;
   department: string | null;
   notes: string | null;
-  system_position_image_data_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -22,7 +21,8 @@ type ComponentRow = {
   component_type: string;
   identified_value: string;
   notes: string | null;
-  image_data_url: string | null;
+  assembly: string | null;
+  sub_component: string | null;
   attributes: Record<string, unknown> | null;
   created_at: string;
 };
@@ -47,7 +47,6 @@ function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): Aggrega
     position: row.position ?? undefined,
     department: row.department ?? undefined,
     notes: row.notes ?? undefined,
-    systemPositionImageDataUrl: row.system_position_image_data_url ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     components: componentRows.map((component) => ({
@@ -55,7 +54,8 @@ function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): Aggrega
       componentType: component.component_type,
       identifiedValue: component.identified_value,
       notes: component.notes ?? undefined,
-      imageDataUrl: component.image_data_url ?? undefined,
+      assembly: component.assembly ?? undefined,
+      subComponent: component.sub_component ?? undefined,
       attributes: toAttributes(component.attributes),
       createdAt: component.created_at
     }))
@@ -128,7 +128,13 @@ export async function listAggregates(query: string): Promise<AggregateRecord[]> 
     }
 
     return record.components.some((component) => {
-      const fields = [component.componentType, component.identifiedValue, component.notes];
+      const fields = [
+        component.componentType,
+        component.assembly,
+        component.subComponent,
+        component.identifiedValue,
+        component.notes
+      ];
       const componentMatch = fields
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(needle));
@@ -224,15 +230,36 @@ export async function createAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord> {
   const supabase = getSupabaseServerClient();
+  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('ventilation_aggregates')
+    .select('id')
+    .ilike('system_position_id', normalizedSystemPositionId)
+    .order('updated_at', { ascending: false })
+    .limit(1);
+
+  assertNoError(existingError);
+
+  const existingId = (existingRows as Array<{ id: string }> | null)?.[0]?.id;
+  if (existingId) {
+    const updated = await updateAggregateRecord(existingId, {
+      ...payload,
+      systemPositionId: normalizedSystemPositionId
+    });
+
+    if (updated) {
+      return updated;
+    }
+  }
 
   const { data, error } = await supabase
     .from('ventilation_aggregates')
     .insert({
-      system_position_id: payload.systemPositionId,
+      system_position_id: normalizedSystemPositionId,
       position: payload.position ?? null,
       department: payload.department ?? null,
-      notes: payload.notes ?? null,
-      system_position_image_data_url: payload.systemPositionImageDataUrl ?? null
+      notes: payload.notes ?? null
     })
     .select('*')
     .single();
@@ -240,6 +267,36 @@ export async function createAggregateRecord(
   assertNoError(error);
 
   return mapAggregate(data as AggregateRow, []);
+}
+
+export async function updateAggregateRecord(
+  aggregateId: string,
+  payload: CreateAggregatePayload
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+
+  const { data, error } = await supabase
+    .from('ventilation_aggregates')
+    .update({
+      system_position_id: normalizedSystemPositionId,
+      position: payload.position ?? null,
+      department: payload.department ?? null,
+      notes: payload.notes ?? null,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', aggregateId)
+    .select('*')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  const componentMap = await loadComponentsByAggregateIds([aggregateId]);
+  return mapAggregate(data as AggregateRow, componentMap.get(aggregateId) ?? []);
 }
 
 export async function addComponentToAggregate(
@@ -260,7 +317,8 @@ export async function addComponentToAggregate(
       component_type: payload.componentType,
       identified_value: payload.identifiedValue,
       notes: payload.notes ?? null,
-      image_data_url: payload.imageDataUrl ?? null,
+      assembly: payload.assembly?.trim() || null,
+      sub_component: payload.subComponent?.trim() || null,
       attributes: payload.attributes ?? {}
     });
 
@@ -274,4 +332,97 @@ export async function addComponentToAggregate(
   assertNoError(updateError);
 
   return getAggregateById(aggregateId);
+}
+
+export async function updateComponentInAggregate(
+  aggregateId: string,
+  componentId: string,
+  payload: CreateAggregateComponentPayload
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+
+  const existing = await getAggregateById(aggregateId);
+  if (!existing) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('ventilation_components')
+    .update({
+      component_type: payload.componentType,
+      identified_value: payload.identifiedValue,
+      notes: payload.notes ?? null,
+      assembly: payload.assembly?.trim() || null,
+      sub_component: payload.subComponent?.trim() || null,
+      attributes: payload.attributes ?? {}
+    })
+    .eq('id', componentId)
+    .eq('aggregate_id', aggregateId)
+    .select('id')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  const { error: updateError } = await supabase
+    .from('ventilation_aggregates')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', aggregateId);
+
+  assertNoError(updateError);
+
+  return getAggregateById(aggregateId);
+}
+
+export async function deleteComponentFromAggregate(
+  aggregateId: string,
+  componentId: string
+): Promise<AggregateRecord | null> {
+  const supabase = getSupabaseServerClient();
+
+  const existing = await getAggregateById(aggregateId);
+  if (!existing) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from('ventilation_components')
+    .delete()
+    .eq('id', componentId)
+    .eq('aggregate_id', aggregateId)
+    .select('id')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  if (!data) {
+    return null;
+  }
+
+  const { error: updateError } = await supabase
+    .from('ventilation_aggregates')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', aggregateId);
+
+  assertNoError(updateError);
+
+  return getAggregateById(aggregateId);
+}
+
+export async function deleteAggregateRecord(aggregateId: string): Promise<boolean> {
+  const supabase = getSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from('ventilation_aggregates')
+    .delete()
+    .eq('id', aggregateId)
+    .select('id')
+    .maybeSingle();
+
+  assertNoError(error);
+
+  return Boolean(data);
 }

@@ -7,36 +7,42 @@ export type ComponentFieldConfig = {
 };
 
 export const COMPONENT_OPTIONS: ComponentType[] = [
-  'Motorbricka',
-  'Flakt',
-  'Kilrep',
-  'Remskivor',
+  'Motor',
+  'Fläkt',
+  'Kilrem',
+  'Remskiva',
+  'Lager',
   'Filter'
 ];
 
 export const COMPONENT_FIELD_CONFIG: Record<ComponentType, ComponentFieldConfig[]> = {
-  Motorbricka: [
+  Motor: [
     { key: 'motorModell', label: 'Motormodell', placeholder: 'Ex: ABB M3AA 132M' },
-    { key: 'lagerTyp', label: 'Lagertyp', placeholder: 'Ex: 6205-2RS C3' },
-    { key: 'lagerAntal', label: 'Lagerantal', placeholder: 'Ex: 2' }
+    { key: 'effektKw', label: 'Effekt (kW)', placeholder: 'Ex: 7,5' },
+    { key: 'markstromA', label: 'Märkström (A)', placeholder: 'Ex: 14,2' }
   ],
-  Flakt: [
-    { key: 'flaktTyp', label: 'Flakttyp', placeholder: 'Ex: Radial' },
+  Fläkt: [
+    { key: 'flakttyp', label: 'Fläkttyp', placeholder: 'Ex: Radial' },
     { key: 'diameterMm', label: 'Diameter (mm)', placeholder: 'Ex: 450' },
     { key: 'rotationsriktning', label: 'Rotationsriktning', placeholder: 'Ex: Medurs' }
   ],
-  Kilrep: [
+  Kilrem: [
     { key: 'profil', label: 'Profil', placeholder: 'Ex: SPA' },
-    { key: 'langd', label: 'Langd', placeholder: 'Ex: 1180' },
+    { key: 'langd', label: 'Längd', placeholder: 'Ex: 1180' },
     { key: 'antal', label: 'Antal', placeholder: 'Ex: 2' }
   ],
-  Remskivor: [
-    { key: 'drivskiva', label: 'Drivskiva', placeholder: 'Ex: 125-2SPZ' },
-    { key: 'medskiva', label: 'Medskiva', placeholder: 'Ex: 200-2SPZ' },
-    { key: 'diameterMm', label: 'Diameter (mm)', placeholder: 'Ex: 125/200' }
+  Remskiva: [
+    { key: 'drivdiameterMm', label: 'Drivdiameter (mm)', placeholder: 'Ex: 125' },
+    { key: 'meddiameterMm', label: 'Meddiameter (mm)', placeholder: 'Ex: 200' },
+    { key: 'sparantal', label: 'Spårantal', placeholder: 'Ex: 2' }
+  ],
+  Lager: [
+    { key: 'lagertyp', label: 'Lagertyp', placeholder: 'Ex: 6205-2RS C3' },
+    { key: 'lagerplacering', label: 'Placering', placeholder: 'Ex: Motorsida NDE' },
+    { key: 'antal', label: 'Antal', placeholder: 'Ex: 2' }
   ],
   Filter: [
-    { key: 'filterklass', label: 'Filterklass', placeholder: 'Ex: F7' },
+    { key: 'filterklass', label: 'Filterklass', placeholder: 'Ex: ePM1 55% (F7)' },
     { key: 'dimension', label: 'Dimension', placeholder: 'Ex: 595x595x48' },
     { key: 'antal', label: 'Antal', placeholder: 'Ex: 4' }
   ]

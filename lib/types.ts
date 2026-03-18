@@ -31,10 +31,11 @@ export type SyncState = 'idle' | 'syncing' | 'offline';
 export type AppMode = 'lagg-till' | 'sok' | 'importera';
 
 export type ComponentType =
-  | 'Motorbricka'
-  | 'Flakt'
-  | 'Kilrep'
-  | 'Remskivor'
+  | 'Motor'
+  | 'Fläkt'
+  | 'Kilrem'
+  | 'Remskiva'
+  | 'Lager'
   | 'Filter';
 
 export type SystemPositionAnalysis = {
@@ -60,14 +61,14 @@ export type CreateAggregatePayload = {
   position?: string;
   department?: string;
   notes?: string;
-  systemPositionImageDataUrl?: string;
 };
 
 export type CreateAggregateComponentPayload = {
   componentType: string;
   identifiedValue: string;
   notes?: string;
-  imageDataUrl?: string;
+  assembly?: string;
+  subComponent?: string;
   attributes?: Record<string, string>;
 };
 
@@ -76,7 +77,8 @@ export type AggregateComponent = {
   componentType: string;
   identifiedValue: string;
   notes?: string;
-  imageDataUrl?: string;
+  assembly?: string;
+  subComponent?: string;
   attributes: Record<string, string>;
   createdAt: string;
 };
@@ -87,7 +89,6 @@ export type AggregateRecord = {
   position?: string;
   department?: string;
   notes?: string;
-  systemPositionImageDataUrl?: string;
   createdAt: string;
   updatedAt: string;
   components: AggregateComponent[];
