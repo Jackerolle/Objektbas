@@ -83,19 +83,19 @@ const CAPTURE_TASKS: CaptureTask[] = [
   {
     id: 'remskiva',
     label: 'Remskiva',
-    description: 'Driv- och medremskiva med spår.',
+    description: 'Remskiva namn.',
     componentType: 'Remskiva'
   },
   {
     id: 'lager',
     label: 'Lager',
-    description: 'Lagertyp, placering och antal.',
+    description: 'Lager fram och bak.',
     componentType: 'Lager'
   },
   {
     id: 'motor',
     label: 'Motor',
-    description: 'Motormodell, effekt och märkström.',
+    description: 'Motormodell, effekt och volt.',
     componentType: 'Motor'
   },
   {
@@ -291,10 +291,10 @@ function splitManualLines(value: string): string[] {
 
 function buildIdentifiedValue(
   componentType: ComponentType,
-  identifiedValue: string,
+  identifiedValueFallback: string,
   attributes: Record<string, string>
 ): string {
-  const direct = identifiedValue.trim();
+  const direct = identifiedValueFallback.trim();
   if (direct) {
     return direct;
   }
@@ -329,6 +329,15 @@ function buildIdentifiedValue(
 
   if (componentType === 'Filter' || componentType === 'Kolfilter') {
     return attributes.filterNamn?.trim() || '';
+  }
+
+  if (componentType === 'Kilrem') {
+    const profil = attributes.profil?.trim();
+    const langd = attributes.langd?.trim();
+    const antal = attributes.antal?.trim();
+    return [profil, langd, antal ? `antal ${antal}` : '']
+      .filter(Boolean)
+      .join(' ');
   }
 
   return '';
@@ -852,7 +861,7 @@ export default function HomePage() {
     ].filter(Boolean);
 
     if (valuesToSave.length === 0) {
-      setError('Identifierat varde kravs for manuell registrering.');
+      setError('Fyll i uppgifter for vald underkategori innan sparning.');
       return;
     }
 
@@ -969,7 +978,7 @@ export default function HomePage() {
     );
 
     if (!identifiedValue.trim()) {
-      setError('Identifierat varde kravs.');
+      setError('Fyll i uppgifter for vald underkategori innan sparning.');
       return;
     }
 
@@ -1403,15 +1412,6 @@ export default function HomePage() {
                   </select>
                 </label>
 
-                <label>
-                  {manualComponentType === '\u00d6vrigt' ? 'Notering' : 'Identifierat varde'}
-                  <input
-                    value={manualValue}
-                    onChange={(event) => setManualValue(event.target.value)}
-                    placeholder='Exempel: SPA 1180, 6205-2RS C3'
-                  />
-                </label>
-
                 {manualAllowsMultiple && (
                   <label className={styles.fullRow}>
                     Flera poster (en per rad)
@@ -1534,15 +1534,6 @@ export default function HomePage() {
                                   </option>
                                 ))}
                               </select>
-                            </label>
-
-                            <label>
-                              Identifierat värde
-                              <input
-                                value={editingIdentifiedValue}
-                                onChange={(event) => setEditingIdentifiedValue(event.target.value)}
-                                placeholder='Exempel: SPA 1180, 6205-2RS C3'
-                              />
                             </label>
 
                             {COMPONENT_FIELD_CONFIG[editingComponentType].map((field) => (

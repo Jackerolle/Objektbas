@@ -25,7 +25,7 @@ export const COMPONENT_FIELD_CONFIG: Record<ComponentType, ComponentFieldConfig[
   Motor: [
     { key: 'motorModell', label: 'Motormodell', placeholder: 'Ex: ABB M3AA 132M' },
     { key: 'effektKw', label: 'Effekt (kW)', placeholder: 'Ex: 7,5' },
-    { key: 'markstromA', label: 'Markstrom (A)', placeholder: 'Ex: 14,2' }
+    { key: 'volt', label: 'Volt (V)', placeholder: 'Ex: 400' }
   ],
   Fl\u00e4kt: [
     { key: 'flakttyp', label: 'Flakttyp', placeholder: 'Ex: Radial' },
@@ -42,10 +42,7 @@ export const COMPONENT_FIELD_CONFIG: Record<ComponentType, ComponentFieldConfig[
     { key: 'antal', label: 'Antal', placeholder: 'Ex: 2' }
   ],
   Remskiva: [
-    { key: 'remskivaNamn', label: 'Remskiva namn', placeholder: 'Ex: SPA 2-spa' },
-    { key: 'storlekMm', label: 'Storlek (mm)', placeholder: 'Ex: 160' },
-    { key: 'sparantal', label: 'Sparantal', placeholder: 'Ex: 2' },
-    { key: 'axeldiameterMm', label: 'Axeldiameter (mm)', placeholder: 'Ex: 24' }
+    { key: 'remskivaNamn', label: 'Remskiva namn', placeholder: 'Ex: SPA 2-spa' }
   ],
   Bussning: [
     { key: 'bussningStorlek', label: 'Bussning storlek', placeholder: 'Ex: 2012' },
@@ -66,12 +63,6 @@ export const COMPONENT_FIELD_CONFIG: Record<ComponentType, ComponentFieldConfig[
       label: 'Lager bak',
       placeholder: 'Ex: 6204-2RS C3',
       required: false
-    },
-    {
-      key: 'lagerPlacering',
-      label: 'Placering',
-      placeholder: 'Ex: Motorsida NDE',
-      required: false
     }
   ],
   Filter: [
@@ -88,7 +79,7 @@ export const COMPONENT_FIELD_CONFIG: Record<ComponentType, ComponentFieldConfig[
   Motorskylt: [
     { key: 'motorModell', label: 'Motormodell', placeholder: 'Ex: ABB M3AA 132M' },
     { key: 'effektKw', label: 'Effekt (kW)', placeholder: 'Ex: 7,5' },
-    { key: 'markstromA', label: 'Markstrom (A)', placeholder: 'Ex: 14,2' },
+    { key: 'volt', label: 'Volt (V)', placeholder: 'Ex: 400' },
     { key: 'varvtalRpm', label: 'Varvtal (rpm)', placeholder: 'Ex: 1450' }
   ],
   \u00d6vrigt: []
@@ -102,9 +93,7 @@ for (const field of Object.values(COMPONENT_FIELD_CONFIG).flat()) {
 
 const ATTRIBUTE_ALIASES: Record<string, string> = {
   lagertyp: 'lagerFram',
-  lagerplacering: 'lagerPlacering',
-  drivdiametermm: 'storlekMm',
-  meddiametermm: 'storlekMm',
+  markstroma: 'volt',
   bussningstorlekmm: 'bussningStorlek'
 };
 
