@@ -1,4 +1,5 @@
 ﻿import {
+  COMPONENT_FIELD_CONFIG,
   createEmptyAttributes,
   getRequiredFieldConfigs,
   normalizeAttributes,
@@ -17,10 +18,33 @@ type GeminiTextJson = {
   suggestedAttributes?: Record<string, unknown>;
 };
 
+class GeminiHttpError extends Error {
+  status: number;
+  body: string;
+  retryDelayMs: number;
+
+  constructor(status: number, body: string) {
+    super(`Gemini-fel (${status}): ${body}`);
+    this.status = status;
+    this.body = body;
+    this.retryDelayMs = parseRetryDelayMs(body);
+  }
+}
+
 function getGeminiConfig() {
   const apiKey = process.env.GEMINI_API_KEY;
   const model = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
-  return { apiKey, model };
+  const fallbackModels = (process.env.GEMINI_FALLBACK_MODELS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return { apiKey, model, fallbackModels };
+}
+
+function getCandidateModels(): string[] {
+  const { model, fallbackModels } = getGeminiConfig();
+  return Array.from(new Set([model, ...fallbackModels]));
 }
 
 function clampConfidence(value: number | undefined): number {
@@ -31,12 +55,88 @@ function clampConfidence(value: number | undefined): number {
   return Math.min(1, Math.max(0, value));
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryDelayMs(body: string): number {
+  const match = body.match(/"retryDelay"\s*:\s*"([0-9.]+)s"/i);
+  if (!match) {
+    return 0;
+  }
+
+  const seconds = Number(match[1]);
+  if (Number.isNaN(seconds) || seconds <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.round(seconds * 1000), 4000);
+}
+
 function sanitizeSystemPositionId(value: string | undefined): string {
   if (!value) {
     return '';
   }
 
-  return value.toUpperCase().replace(/[^A-Z0-9-]/g, '').replace(/^-+|-+$/g, '');
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isLikelySystemPositionId(value: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = sanitizeSystemPositionId(value);
+  if (!normalized || normalized.length < 4) {
+    return false;
+  }
+
+  if (['OKAND', 'UNKNOWN', 'NA', 'N/A', 'MANUELL-KRAVS'].includes(normalized)) {
+    return false;
+  }
+
+  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+}
+
+function extractSystemPositionFromText(rawText: string): string {
+  const normalizedWords = rawText
+    .toUpperCase()
+    .replace(/[^A-Z0-9\-\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => sanitizeSystemPositionId(word));
+
+  let best = '';
+  let bestScore = -1;
+
+  for (const candidate of normalizedWords) {
+    if (!isLikelySystemPositionId(candidate)) {
+      continue;
+    }
+
+    let score = 0;
+    if (candidate.includes('-')) {
+      score += 3;
+    }
+    if (/^[A-Z]{1,6}-?[0-9]{2,8}[A-Z0-9-]*$/.test(candidate)) {
+      score += 4;
+    }
+    if (candidate.length >= 6 && candidate.length <= 14) {
+      score += 2;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+
+  return best;
 }
 
 function parseDataUrl(imageDataUrl: string): { mimeType: string; data: string } {
@@ -102,14 +202,15 @@ function parseGeminiJson(raw: string): GeminiTextJson {
   }
 }
 
-async function callGemini(
+async function requestGeminiText(
   prompt: string,
-  imageDataUrl: string
-): Promise<GeminiTextJson> {
-  const { apiKey, model } = getGeminiConfig();
-
+  imageDataUrl: string,
+  model: string,
+  expectJson: boolean
+): Promise<string> {
+  const { apiKey } = getGeminiConfig();
   if (!apiKey) {
-    return {};
+    return '';
   }
 
   const { mimeType, data } = parseDataUrl(imageDataUrl);
@@ -126,7 +227,8 @@ async function callGemini(
           }
         ],
         generationConfig: {
-          temperature: 0.1
+          temperature: 0.1,
+          ...(expectJson ? { response_mime_type: 'application/json' } : {})
         }
       })
     }
@@ -134,17 +236,74 @@ async function callGemini(
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Gemini-fel (${response.status}): ${body}`);
+    throw new GeminiHttpError(response.status, body);
   }
 
   const json = (await response.json()) as unknown;
-  const text = extractGeminiText(json);
+  return extractGeminiText(json).trim();
+}
 
-  if (!text) {
-    return {};
+async function callGeminiJson(prompt: string, imageDataUrl: string): Promise<GeminiTextJson> {
+  const models = getCandidateModels();
+  let lastError: unknown;
+
+  for (const model of models) {
+    try {
+      const raw = await requestGeminiText(prompt, imageDataUrl, model, true);
+      const parsed = parseGeminiJson(raw);
+      if (Object.keys(parsed).length > 0) {
+        return parsed;
+      }
+    } catch (error) {
+      lastError = error;
+
+      if (error instanceof GeminiHttpError && error.status === 429) {
+        await delay(error.retryDelayMs || 1200);
+        continue;
+      }
+    }
   }
 
-  return parseGeminiJson(text);
+  if (lastError) {
+    throw lastError;
+  }
+
+  return {};
+}
+
+async function callGeminiText(prompt: string, imageDataUrl: string): Promise<string> {
+  const models = getCandidateModels();
+  let lastError: unknown;
+
+  for (const model of models) {
+    try {
+      const raw = await requestGeminiText(prompt, imageDataUrl, model, false);
+      if (raw) {
+        return raw;
+      }
+    } catch (error) {
+      lastError = error;
+
+      if (error instanceof GeminiHttpError && error.status === 429) {
+        await delay(error.retryDelayMs || 1200);
+        continue;
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  return '';
+}
+
+async function transcribeImageWithGemini(imageDataUrl: string): Promise<string> {
+  const prompt =
+    'Transkribera all tydlig text i bilden rad-for-rad. Returnera bara text utan forklaringar.';
+
+  const text = await callGeminiText(prompt, imageDataUrl);
+  return text.slice(0, 2000);
 }
 
 export async function analyzeSystemPositionWithGemini(
@@ -162,18 +321,45 @@ export async function analyzeSystemPositionWithGemini(
     };
   }
 
-  const prompt =
-    'Du ar OCR-assistent. Las endast systempositionens ID fran bilden. ' +
-    'Returnera ENDAST JSON med falten systemPositionId, confidence och notes. Inga markdown-block.';
+  const ocrText = await transcribeImageWithGemini(imageDataUrl).catch(() => '');
+  const ocrCandidate = extractSystemPositionFromText(ocrText);
 
-  const parsed = await callGemini(prompt, imageDataUrl);
-  const systemPositionId = sanitizeSystemPositionId(parsed.systemPositionId) || 'OKAND';
+  const prompt =
+    'Du ar OCR-assistent for objektskyltar. Returnera ENDAST JSON med falten systemPositionId, confidence och notes. ' +
+    'Om osakert: systemPositionId = "MANUELL-KRAVS". ' +
+    `OCR-text (kan innehalla fel): ${ocrText || 'saknas'}`;
+
+  const parsed = await callGeminiJson(prompt, imageDataUrl).catch(
+    () => ({}) as GeminiTextJson
+  );
+  const geminiCandidate = sanitizeSystemPositionId(parsed.systemPositionId);
+
+  let finalId = '';
+  let confidence = clampConfidence(parsed.confidence);
+  let source = 'gemini';
+
+  if (isLikelySystemPositionId(geminiCandidate)) {
+    finalId = geminiCandidate;
+  } else if (isLikelySystemPositionId(ocrCandidate)) {
+    finalId = ocrCandidate;
+    confidence = Math.max(0.62, confidence);
+    source = 'ocr-fallback';
+  } else {
+    finalId = 'MANUELL-KRAVS';
+    confidence = Math.min(confidence, 0.35);
+    source = 'fallback';
+  }
+
+  const noteParts = [parsed.notes?.trim() || 'Kontrollera ID innan du sparar.'];
+  if (ocrText) {
+    noteParts.push(`OCR: ${ocrText.slice(0, 160)}`);
+  }
 
   return {
-    systemPositionId,
-    confidence: clampConfidence(parsed.confidence),
-    notes: parsed.notes?.trim() || 'Kontrollera ID innan du sparar.',
-    provider: 'gemini',
+    systemPositionId: finalId,
+    confidence,
+    notes: noteParts.join(' '),
+    provider: source,
     requiresManualConfirmation: true
   };
 }
@@ -204,28 +390,37 @@ export async function analyzeComponentWithGemini(
   const requiredFields = getRequiredFieldConfigs(resolvedComponentType).map(
     (field) => field.key
   );
-  const requiredFieldsText =
-    requiredFields.length > 0 ? requiredFields.join(', ') : 'inga';
+  const allFields = COMPONENT_FIELD_CONFIG[resolvedComponentType].map(
+    (field) => field.key
+  );
+  const ocrText = await transcribeImageWithGemini(imageDataUrl).catch(() => '');
 
   const prompt =
     `Du analyserar ventilationskomponenten '${resolvedComponentType}'. ` +
-    `Obligatoriska falt ar: ${requiredFieldsText}. ` +
+    `Fyll sa manga falt som mojligt. Alla falt: ${allFields.join(', ') || 'inga'}. ` +
+    `Obligatoriska falt: ${requiredFields.join(', ') || 'inga'}. ` +
     'Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, notes och suggestedAttributes. ' +
-    'suggestedAttributes ska vara ett objekt med nyckel/varde. Inga markdown-block.';
+    'suggestedAttributes ska vara ett objekt med nyckel/varde. Inga markdown-block. ' +
+    `OCR-text (kan innehalla fel): ${ocrText || 'saknas'}`;
 
-  const parsed = await callGemini(prompt, imageDataUrl);
+  const parsed = await callGeminiJson(prompt, imageDataUrl);
 
   const suggestedAttributes = {
     ...createEmptyAttributes(resolvedComponentType),
     ...normalizeAttributes(parsed.suggestedAttributes)
   };
 
+  const notes = [parsed.notes?.trim() || 'Bekrafta komponentdata innan sparning.'];
+  if (ocrText) {
+    notes.push(`OCR: ${ocrText.slice(0, 160)}`);
+  }
+
   return {
     componentType: resolvedComponentType,
     identifiedValue:
       parsed.identifiedValue?.trim() || `Okand ${resolvedComponentType}`,
     confidence: clampConfidence(parsed.confidence),
-    notes: parsed.notes?.trim() || 'Bekrafta komponentdata innan sparning.',
+    notes: notes.join(' '),
     provider: 'gemini',
     requiresManualConfirmation: true,
     suggestedAttributes
