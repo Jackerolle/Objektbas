@@ -110,7 +110,7 @@ export function parseAggregateWorkbook(buffer: Buffer): ParsedImportPayload {
   const warnings: string[] = [];
   let skippedRows = 0;
 
-  rows.forEach((row, index) => {
+  rows.forEach((row: Record<string, unknown>, index: number) => {
     const rowNumber = index + 2;
 
     const systemPositionId = pickValue(row, [
