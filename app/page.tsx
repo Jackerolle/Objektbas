@@ -809,18 +809,6 @@ export default function HomePage() {
     }
   };
 
-  useEffect(() => {
-    if (mode !== 'filterlista') {
-      return;
-    }
-
-    if (filterRows.length || isLoadingFilterList) {
-      return;
-    }
-
-    void handleLoadFilterList(filterQuery);
-  }, [filterQuery, filterRows.length, isLoadingFilterList, mode]);
-
   const handleCapture = async (imageDataUrl: string) => {
     clearFeedback();
     setIsProcessingCapture(true);
