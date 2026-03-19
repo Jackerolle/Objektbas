@@ -691,6 +691,27 @@
   margin-top: 0.6rem;
 }
 
+.aggregateMetaGrid {
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0.6rem;
+}
+
+.aggregateMetaItem {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #d2deea;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.55rem;
+  background: rgba(15, 23, 42, 0.46);
+  padding: 0.38rem 0.5rem;
+}
+
+.aggregateMetaNotes {
+  grid-column: 1 / -1;
+}
+
 .tags {
   margin-top: 0.45rem;
   display: flex;
@@ -742,6 +763,21 @@
 .componentOverviewList li span {
   font-size: 0.8rem;
   color: #c4d2df;
+}
+
+.componentAttributeList {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.1rem;
+}
+
+.componentAttributeList span {
+  font-size: 0.78rem;
+  color: #b8c6d4;
+}
+
+.componentNote {
+  margin-top: 0.1rem;
 }
 
 .openButton {
@@ -813,6 +849,10 @@
 
   .libraryAggregateRow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aggregateMetaGrid {
+    grid-template-columns: 1fr;
   }
 }
 

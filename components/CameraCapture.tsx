@@ -1,7 +1,7 @@
 'use client';
 
 import type { ChangeEvent } from 'react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Props = {
   onCapture: (dataUrl: string) => void | Promise<void>;
@@ -11,6 +11,7 @@ type Props = {
   helperText?: string;
   disabled?: boolean;
   uploadLabel?: string;
+  onRegisterCameraTrigger?: ((trigger: (() => void) | null) => void) | undefined;
 };
 
 type FileSource = 'camera' | 'gallery';
@@ -170,7 +171,8 @@ export function CameraCapture({
   captureLabel = 'Ta foto med enhet',
   helperText,
   disabled = false,
-  uploadLabel = 'Ladda upp foto'
+  uploadLabel = 'Ladda upp foto',
+  onRegisterCameraTrigger
 }: Props) {
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const deviceCameraInputRef = useRef<HTMLInputElement>(null);
@@ -242,6 +244,26 @@ export function CameraCapture({
     setLastCaptureInfo('');
     openInputPicker(deviceCameraInputRef.current);
   };
+
+  useEffect(() => {
+    if (!onRegisterCameraTrigger) {
+      return;
+    }
+
+    onRegisterCameraTrigger(() => {
+      if (disabled || isUploading || isSubmitting) {
+        return;
+      }
+
+      setError(null);
+      setLastCaptureInfo('');
+      openInputPicker(deviceCameraInputRef.current);
+    });
+
+    return () => {
+      onRegisterCameraTrigger(null);
+    };
+  }, [disabled, isSubmitting, isUploading, onRegisterCameraTrigger]);
 
   const readFileToDataUrl = async (file: File): Promise<string> => {
     return new Promise<string>((resolve, reject) => {
