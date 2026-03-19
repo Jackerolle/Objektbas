@@ -36,30 +36,7 @@ const SYSTEM_ID_BLACKLIST = new Set([
 ]);
 const SYSTEM_ID_PATTERN = /^\d{3}[A-Z]{2}\d{3,4}$/;
 
-const OCR_LETTER_TO_DIGIT: Record<string, string> = {
-  O: '0',
-  Q: '0',
-  D: '0',
-  I: '1',
-  L: '1',
-  Z: '2',
-  A: '4',
-  S: '5',
-  G: '6',
-  T: '7',
-  B: '8'
-};
-
-const OCR_DIGIT_TO_LETTER: Record<string, string> = {
-  '0': 'O',
-  '1': 'I',
-  '2': 'Z',
-  '4': 'A',
-  '5': 'S',
-  '6': 'G',
-  '7': 'T',
-  '8': 'B'
-};
+type Variant = { value: string; penalty: number };
 
 let workerPromise: Promise<LocalWorker> | null = null;
 
@@ -123,66 +100,153 @@ function scoreSystemIdCandidate(value: string): number {
   return score;
 }
 
-function normalizeToDigits(segment: string): string | null {
-  let output = '';
-  for (const char of segment) {
-    if (/[0-9]/.test(char)) {
-      output += char;
-      continue;
-    }
-
-    const mapped = OCR_LETTER_TO_DIGIT[char];
-    if (!mapped) {
-      return null;
-    }
-
-    output += mapped;
+function digitVariantsForChar(char: string): Variant[] {
+  if (/^[0-9]$/.test(char)) {
+    return [{ value: char, penalty: 0 }];
   }
 
-  return output;
+  switch (char) {
+    case 'O':
+    case 'Q':
+      return [{ value: '0', penalty: 0.12 }];
+    case 'D':
+      return [{ value: '0', penalty: 0.22 }];
+    case 'I':
+    case 'L':
+      return [{ value: '1', penalty: 0.18 }];
+    case 'Z':
+      return [{ value: '2', penalty: 0.24 }];
+    case 'A':
+      return [{ value: '4', penalty: 0.18 }];
+    case 'S':
+      return [
+        { value: '8', penalty: 0.12 },
+        { value: '5', penalty: 0.28 }
+      ];
+    case 'G':
+      return [{ value: '6', penalty: 0.26 }];
+    case 'T':
+      return [{ value: '7', penalty: 0.28 }];
+    case 'B':
+      return [{ value: '8', penalty: 0.2 }];
+    default:
+      return [];
+  }
 }
 
-function normalizeToLetters(segment: string): string | null {
-  let output = '';
-  for (const char of segment) {
-    if (/[A-Z]/.test(char)) {
-      output += char;
-      continue;
-    }
-
-    const mapped = OCR_DIGIT_TO_LETTER[char];
-    if (!mapped) {
-      return null;
-    }
-
-    output += mapped;
+function letterVariantsForChar(char: string): Variant[] {
+  if (/^[A-Z]$/.test(char)) {
+    return [{ value: char, penalty: 0 }];
   }
 
-  return output;
+  switch (char) {
+    case '0':
+      return [{ value: 'O', penalty: 0.2 }];
+    case '1':
+      return [
+        { value: 'I', penalty: 0.2 },
+        { value: 'L', penalty: 0.28 }
+      ];
+    case '2':
+      return [{ value: 'Z', penalty: 0.26 }];
+    case '4':
+      return [{ value: 'A', penalty: 0.24 }];
+    case '5':
+      return [{ value: 'S', penalty: 0.24 }];
+    case '6':
+      return [{ value: 'G', penalty: 0.28 }];
+    case '7':
+      return [{ value: 'T', penalty: 0.28 }];
+    case '8':
+      return [{ value: 'B', penalty: 0.26 }];
+    default:
+      return [];
+  }
 }
 
-function buildPatternCorrectedCandidates(rawCandidate: string): string[] {
+function combineVariants(
+  current: Variant[],
+  nextOptions: Variant[],
+  maxVariants: number
+): Variant[] {
+  const combined: Variant[] = [];
+
+  for (const prefix of current) {
+    for (const option of nextOptions) {
+      combined.push({
+        value: `${prefix.value}${option.value}`,
+        penalty: prefix.penalty + option.penalty
+      });
+    }
+  }
+
+  combined.sort((a, b) => a.penalty - b.penalty);
+  return combined.slice(0, maxVariants);
+}
+
+function normalizeToDigitsVariants(segment: string, maxVariants = 8): Variant[] {
+  let variants: Variant[] = [{ value: '', penalty: 0 }];
+
+  for (const char of segment) {
+    const options = digitVariantsForChar(char);
+    if (!options.length) {
+      return [];
+    }
+
+    variants = combineVariants(variants, options, maxVariants);
+  }
+
+  return variants;
+}
+
+function normalizeToLettersVariants(segment: string, maxVariants = 8): Variant[] {
+  let variants: Variant[] = [{ value: '', penalty: 0 }];
+
+  for (const char of segment) {
+    const options = letterVariantsForChar(char);
+    if (!options.length) {
+      return [];
+    }
+
+    variants = combineVariants(variants, options, maxVariants);
+  }
+
+  return variants;
+}
+
+function buildPatternCorrectedCandidates(rawCandidate: string): Variant[] {
   const compact = sanitizeSystemId(rawCandidate);
   if (!compact) {
     return [];
   }
 
-  const results = new Set<string>();
+  const results = new Map<string, number>();
 
   const tryPattern = (segment: string) => {
     const prefix = segment.slice(0, 3);
     const middle = segment.slice(3, 5);
     const suffix = segment.slice(5);
 
-    const normalizedPrefix = normalizeToDigits(prefix);
-    const normalizedMiddle = normalizeToLetters(middle);
-    const normalizedSuffix = normalizeToDigits(suffix);
+    const prefixVariants = normalizeToDigitsVariants(prefix);
+    const middleVariants = normalizeToLettersVariants(middle);
+    const suffixVariants = normalizeToDigitsVariants(suffix);
 
-    if (!normalizedPrefix || !normalizedMiddle || !normalizedSuffix) {
+    if (!prefixVariants.length || !middleVariants.length || !suffixVariants.length) {
       return;
     }
 
-    results.add(`${normalizedPrefix}${normalizedMiddle}${normalizedSuffix}`);
+    for (const prefixVariant of prefixVariants) {
+      for (const middleVariant of middleVariants) {
+        for (const suffixVariant of suffixVariants) {
+          const value = `${prefixVariant.value}${middleVariant.value}${suffixVariant.value}`;
+          const penalty = prefixVariant.penalty + middleVariant.penalty + suffixVariant.penalty;
+          const current = results.get(value);
+          if (current === undefined || penalty < current) {
+            results.set(value, penalty);
+          }
+        }
+      }
+    }
   };
 
   for (const targetLength of [8, 9]) {
@@ -197,10 +261,10 @@ function buildPatternCorrectedCandidates(rawCandidate: string): string[] {
   }
 
   if (compact.length === 8 || compact.length === 9) {
-    results.add(compact);
+    results.set(compact, 0);
   }
 
-  return Array.from(results);
+  return Array.from(results.entries()).map(([value, penalty]) => ({ value, penalty }));
 }
 
 function extractSystemIdFromText(rawText: string): string {
@@ -214,20 +278,23 @@ function extractSystemIdFromText(rawText: string): string {
   let bestScore = -1;
 
   const evaluate = (candidate: string, bonus = 0) => {
-    for (const normalized of buildPatternCorrectedCandidates(candidate)) {
-      const score = scoreSystemIdCandidate(normalized);
+    for (const variant of buildPatternCorrectedCandidates(candidate)) {
+      const score = scoreSystemIdCandidate(variant.value);
       if (score < 0) {
         continue;
       }
 
-      const correctionBonus = normalized === sanitizeSystemId(candidate) ? 0 : 4;
-      const finalScore = score + bonus + correctionBonus;
+      const correctionBonus = variant.value === sanitizeSystemId(candidate) ? 0 : 4;
+      const lengthPenalty = variant.value.length === 9 ? 0.75 : 0;
+      const conversionPenalty = variant.penalty * 3;
+      const finalScore =
+        score + bonus + correctionBonus - lengthPenalty - conversionPenalty;
       if (
         finalScore > bestScore ||
-        (finalScore === bestScore && normalized.length > best.length)
+        (finalScore === bestScore && variant.value.length > best.length)
       ) {
         bestScore = finalScore;
-        best = normalized;
+        best = variant.value;
       }
     }
   };
