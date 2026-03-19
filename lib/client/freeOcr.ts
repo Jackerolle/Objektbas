@@ -2,13 +2,20 @@
 
 import { ComponentAnalysis, SystemPositionAnalysis } from '@/lib/types';
 
-type OcrEngine = 'text-detector' | 'tesseract-raw' | 'tesseract-contrast' | 'fallback';
+type OcrEngine =
+  | 'text-detector'
+  | 'tesseract-raw'
+  | 'tesseract-contrast'
+  | 'tesseract-focus'
+  | 'fallback';
 
 type OcrScanResult = {
   text: string;
   confidence: number;
   engine: OcrEngine;
   diagnostics: string[];
+  candidate?: string;
+  candidateScore?: number;
 };
 
 type LocalWorker = {
@@ -336,6 +343,52 @@ async function createHighContrastDataUrl(dataUrl: string): Promise<string> {
   return canvas.toDataURL('image/jpeg', 0.95);
 }
 
+async function createFocusedPlateDataUrl(dataUrl: string): Promise<string> {
+  const image = await loadImage(dataUrl);
+  const bounds = fitWithinBounds(
+    image.naturalWidth || image.width,
+    image.naturalHeight || image.height,
+    2600
+  );
+
+  const baseCanvas = document.createElement('canvas');
+  baseCanvas.width = bounds.width;
+  baseCanvas.height = bounds.height;
+  const baseCtx = baseCanvas.getContext('2d');
+  if (!baseCtx) {
+    throw new Error('Canvas saknas for fokusbeskarning.');
+  }
+
+  baseCtx.drawImage(image, 0, 0, bounds.width, bounds.height);
+
+  const cropX = Math.round(bounds.width * 0.08);
+  const cropY = Math.round(bounds.height * 0.45);
+  const cropW = Math.round(bounds.width * 0.84);
+  const cropH = Math.round(bounds.height * 0.48);
+
+  const focusedCanvas = document.createElement('canvas');
+  focusedCanvas.width = Math.max(1, Math.round(cropW * 1.6));
+  focusedCanvas.height = Math.max(1, Math.round(cropH * 1.6));
+  const focusedCtx = focusedCanvas.getContext('2d');
+  if (!focusedCtx) {
+    throw new Error('Canvas saknas for fokuserad OCR.');
+  }
+
+  focusedCtx.drawImage(
+    baseCanvas,
+    cropX,
+    cropY,
+    cropW,
+    cropH,
+    0,
+    0,
+    focusedCanvas.width,
+    focusedCanvas.height
+  );
+
+  return focusedCanvas.toDataURL('image/jpeg', 0.95);
+}
+
 async function recognizeWithTextDetector(blob: Blob): Promise<OcrScanResult> {
   if (typeof window === 'undefined' || typeof createImageBitmap !== 'function') {
     return {
@@ -436,8 +489,56 @@ async function recognizeWithTesseract(
   };
 }
 
-async function runLocalOcr(imageDataUrl: string): Promise<OcrScanResult> {
+function withSystemCandidate(scan: OcrScanResult): OcrScanResult {
+  const candidate = extractSystemIdFromText(scan.text);
+  const candidateScore = candidate ? scoreSystemIdCandidate(candidate) : -1;
+
+  return {
+    ...scan,
+    candidate: candidate || undefined,
+    candidateScore
+  };
+}
+
+function chooseBestSystemIdScan(scans: OcrScanResult[]): OcrScanResult {
+  const ranked = scans.map(withSystemCandidate);
+  ranked.sort((a, b) => {
+    const scoreDiff = (b.candidateScore ?? -1) - (a.candidateScore ?? -1);
+    if (scoreDiff !== 0) {
+      return scoreDiff;
+    }
+
+    const confidenceDiff = b.confidence - a.confidence;
+    if (confidenceDiff !== 0) {
+      return confidenceDiff;
+    }
+
+    return b.text.length - a.text.length;
+  });
+
+  return ranked[0];
+}
+
+function chooseBestComponentScan(scans: OcrScanResult[]): OcrScanResult {
+  const ranked = [...scans];
+  ranked.sort((a, b) => {
+    const confidenceDiff = b.confidence - a.confidence;
+    if (confidenceDiff !== 0) {
+      return confidenceDiff;
+    }
+
+    return b.text.length - a.text.length;
+  });
+
+  return ranked[0];
+}
+
+async function runLocalOcr(
+  imageDataUrl: string,
+  mode: 'system-id' | 'component' = 'component'
+): Promise<OcrScanResult> {
   const diagnostics: string[] = [];
+  const scans: OcrScanResult[] = [];
 
   try {
     const blob = await dataUrlToBlob(imageDataUrl);
@@ -445,7 +546,7 @@ async function runLocalOcr(imageDataUrl: string): Promise<OcrScanResult> {
     diagnostics.push(...detector.diagnostics);
 
     if (detector.text) {
-      return detector;
+      scans.push(detector);
     }
   } catch (error) {
     diagnostics.push(`TextDetector-fel: ${String(error).slice(0, 120)}`);
@@ -455,7 +556,7 @@ async function runLocalOcr(imageDataUrl: string): Promise<OcrScanResult> {
     const raw = await recognizeWithTesseract(imageDataUrl, 'tesseract-raw');
     diagnostics.push(...raw.diagnostics);
     if (raw.text) {
-      return { ...raw, diagnostics };
+      scans.push(raw);
     }
   } catch (error) {
     diagnostics.push(`Tesseract-fel: ${String(error).slice(0, 120)}`);
@@ -465,9 +566,32 @@ async function runLocalOcr(imageDataUrl: string): Promise<OcrScanResult> {
     const enhanced = await createHighContrastDataUrl(imageDataUrl);
     const contrast = await recognizeWithTesseract(enhanced, 'tesseract-contrast');
     diagnostics.push(...contrast.diagnostics);
-    return { ...contrast, diagnostics };
+    if (contrast.text) {
+      scans.push(contrast);
+    }
   } catch (error) {
     diagnostics.push(`Kontrast-OCR-fel: ${String(error).slice(0, 120)}`);
+  }
+
+  try {
+    const focused = await createFocusedPlateDataUrl(imageDataUrl);
+    const focus = await recognizeWithTesseract(focused, 'tesseract-focus');
+    diagnostics.push(...focus.diagnostics);
+    if (focus.text) {
+      scans.push(focus);
+    }
+  } catch (error) {
+    diagnostics.push(`Fokus-OCR-fel: ${String(error).slice(0, 120)}`);
+  }
+
+  if (scans.length > 0) {
+    const selected =
+      mode === 'system-id' ? chooseBestSystemIdScan(scans) : chooseBestComponentScan(scans);
+
+    return {
+      ...selected,
+      diagnostics
+    };
   }
 
   return {
@@ -491,14 +615,18 @@ export async function analyzeSystemPositionLocally(
     };
   }
 
-  const ocr = await runLocalOcr(imageDataUrl);
-  const candidate = extractSystemIdFromText(ocr.text);
+  const ocr = await runLocalOcr(imageDataUrl, 'system-id');
+  const candidate = ocr.candidate || extractSystemIdFromText(ocr.text);
 
   if (isLikelySystemId(candidate)) {
+    const scoreBoost = Math.max(0, ocr.candidateScore ?? 0);
+    const confidenceFromScore = Math.min(0.94, 0.35 + scoreBoost * 0.03);
     return {
       systemPositionId: candidate,
-      confidence: Math.max(0.35, ocr.confidence || 0.55),
-      notes: `Lokal OCR (${ocr.engine}). OCR: ${summarizeText(ocr.text)}`,
+      confidence: Math.max(0.35, ocr.confidence || 0.55, confidenceFromScore),
+      notes: `Lokal OCR (${ocr.engine}). ID-kandidat: ${candidate}. OCR: ${summarizeText(
+        ocr.text
+      )}`,
       provider: `local-${ocr.engine}`,
       requiresManualConfirmation: true
     };
@@ -532,7 +660,7 @@ export async function analyzeComponentLocally(
     };
   }
 
-  const ocr = await runLocalOcr(imageDataUrl);
+  const ocr = await runLocalOcr(imageDataUrl, 'component');
   const identifiedValue = pickComponentValue(ocr.text);
 
   if (!identifiedValue) {
