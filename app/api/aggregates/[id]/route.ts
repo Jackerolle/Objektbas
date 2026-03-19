@@ -15,6 +15,35 @@ type RouteContext = {
   };
 };
 
+function normalizeSystemPositionId(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isValidSystemPositionId(value: string): boolean {
+  if (!value || value.length < 4 || value.length > 20) {
+    return false;
+  }
+
+  if (!/[A-Z]/.test(value) || !/[0-9]/.test(value)) {
+    return false;
+  }
+
+  if (
+    /(MANUELL-KRAVS|UNKNOWN|OKAND|GEMINI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|GOOGLE|GENERATIVELANGUAGE|API)/.test(
+      value
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   try {
     const aggregate = await getAggregateById(context.params.id);
@@ -43,9 +72,20 @@ export async function PATCH(request: Request, context: RouteContext) {
       );
     }
 
+    const normalizedId = normalizeSystemPositionId(payload.systemPositionId);
+    if (!isValidSystemPositionId(normalizedId)) {
+      return NextResponse.json(
+        {
+          error:
+            'Ogiltigt systempositions-ID. Kontrollera objektskylten eller mata in ID manuellt.'
+        },
+        { status: 400 }
+      );
+    }
+
     const updated = await updateAggregateRecord(context.params.id, {
       ...payload,
-      systemPositionId: payload.systemPositionId.trim()
+      systemPositionId: normalizedId
     });
 
     if (!updated) {

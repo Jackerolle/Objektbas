@@ -174,6 +174,14 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
     return false;
   }
 
+  if (
+    /(GEMINI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|GOOGLE|GENERATIVELANGUAGE|API)/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+
   return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
 }
 
@@ -729,21 +737,22 @@ export default function HomePage() {
         setSelectedTaskId(getNextTaskId('skylt', nextCaptured));
 
         const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
+        const providerText = analysis.provider ? ` [${analysis.provider}]` : '';
         const usedManual = Boolean(manualId) && resolvedId === manualId && !highConfidenceAi;
         const usedLowConfidenceAi = resolvedId === aiId && aiIdIsUsable && !highConfidenceAi;
         const usedNoteFallback = resolvedId === noteId && noteIdIsUsable && !highConfidenceAi;
         setStatus(
           usedManual
-            ? `Objektskylt sparad med manuellt ID ${resolvedId}.${analysisNote}`
+            ? `Objektskylt sparad med manuellt ID ${resolvedId}.${providerText}${analysisNote}`
             : usedLowConfidenceAi
               ? `Objektskylt tolkad med lagre sakerhet (${toPercent(
                   analysis.confidence
-                )}) och sparad som ${resolvedId}. Bekrafta ID.${analysisNote}`
+                )}) och sparad som ${resolvedId}.${providerText} Bekrafta ID.${analysisNote}`
             : usedNoteFallback
-              ? `Objektskylt sparad med OCR-kandidat ${resolvedId}. Bekrafta ID manuellt.${analysisNote}`
+              ? `Objektskylt sparad med OCR-kandidat ${resolvedId}.${providerText} Bekrafta ID manuellt.${analysisNote}`
             : `Objektskylt tolkad (${toPercent(
                 analysis.confidence
-              )}) och aggregat sparat. Fortsätt med komponentfoton.${analysisNote}`
+              )}) och aggregat sparat.${providerText} Fortsätt med komponentfoton.${analysisNote}`
         );
         return;
       }

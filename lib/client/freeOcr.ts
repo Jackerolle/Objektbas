@@ -53,6 +53,14 @@ function isLikelySystemId(value: string): boolean {
     return false;
   }
 
+  if (
+    /(GEMINI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|GOOGLE|GENERATIVELANGUAGE|API)/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+
   return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
 }
 

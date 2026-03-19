@@ -8,6 +8,35 @@ import { CreateAggregatePayload } from '@/lib/types';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+function normalizeSystemPositionId(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/^-+|-+$/g, '');
+}
+
+function isValidSystemPositionId(value: string): boolean {
+  if (!value || value.length < 4 || value.length > 20) {
+    return false;
+  }
+
+  if (!/[A-Z]/.test(value) || !/[0-9]/.test(value)) {
+    return false;
+  }
+
+  if (
+    /(MANUELL-KRAVS|UNKNOWN|OKAND|GEMINI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|GOOGLE|GENERATIVELANGUAGE|API)/.test(
+      value
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -34,9 +63,20 @@ export async function POST(request: Request) {
       );
     }
 
+    const normalizedId = normalizeSystemPositionId(payload.systemPositionId);
+    if (!isValidSystemPositionId(normalizedId)) {
+      return NextResponse.json(
+        {
+          error:
+            'Ogiltigt systempositions-ID. Kontrollera objektskylten eller mata in ID manuellt.'
+        },
+        { status: 400 }
+      );
+    }
+
     const created = await createAggregateRecord({
       ...payload,
-      systemPositionId: payload.systemPositionId.trim()
+      systemPositionId: normalizedId
     });
 
     return NextResponse.json(created, { status: 201 });
