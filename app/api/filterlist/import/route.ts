@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { parseFilterListWorkbook } from '@/lib/server/importFilterList';
-import { replaceFilterListRows } from '@/lib/server/filterListRepository';
+import {
+  replaceFilterListRows,
+  syncFilterListRowsToAggregates
+} from '@/lib/server/filterListRepository';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +20,7 @@ export async function POST(request: Request) {
     const bytes = await file.arrayBuffer();
     const parsed = parseFilterListWorkbook(Buffer.from(bytes));
     const importedRows = await replaceFilterListRows(file.name, parsed.rows);
+    const syncResult = await syncFilterListRowsToAggregates(parsed.rows);
 
     return NextResponse.json({
       sourceFileName: file.name,
@@ -24,7 +28,12 @@ export async function POST(request: Request) {
       skippedRows: parsed.skippedRows,
       importedRows,
       columns: parsed.columns,
-      warnings: parsed.warnings
+      warnings: parsed.warnings,
+      syncedAggregates: syncResult.syncedAggregates,
+      insertedFilterComponents: syncResult.insertedFilterComponents,
+      skippedNoObjectMatch: syncResult.skippedNoObjectMatch,
+      skippedNoFilterData: syncResult.skippedNoFilterData,
+      skippedExistingFilter: syncResult.skippedExistingFilter
     });
   } catch (error) {
     return NextResponse.json(

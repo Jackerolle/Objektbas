@@ -162,4 +162,9 @@ export type ImportFilterListResult = {
   importedRows: number;
   columns: string[];
   warnings: string[];
+  syncedAggregates?: number;
+  insertedFilterComponents?: number;
+  skippedNoObjectMatch?: number;
+  skippedNoFilterData?: number;
+  skippedExistingFilter?: number;
 };

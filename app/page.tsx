@@ -794,8 +794,12 @@ export default function HomePage() {
       const result = await importFilterListFile(filterFile);
       setFilterFile(null);
       setFilterQuery('');
+      const syncSummary =
+        typeof result.insertedFilterComponents === 'number'
+          ? ` Synk: +${result.insertedFilterComponents} filter pa ${result.syncedAggregates ?? 0} aggregat.`
+          : '';
       setStatus(
-        `Filterlista importerad (${result.importedRows}/${result.totalRows} rader).`
+        `Filterlista importerad (${result.importedRows}/${result.totalRows} rader).${syncSummary}`
       );
       await handleLoadFilterList('');
     } catch (importError) {

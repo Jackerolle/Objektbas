@@ -40,6 +40,9 @@ const FILTER_KEY_ALIASES = [
 
 const DIMENSION_KEY_ALIASES = ['dimension', 'storlek', 'size'];
 const KLASS_KEY_ALIASES = ['filterklass', 'klass'];
+const ANTAL_KEY_ALIASES = ['antal', 'qty', 'quantity', 'st'];
+const PLACERING_KEY_ALIASES = ['placering', 'position', 'lokation', 'plats'];
+const INTERVALL_KEY_ALIASES = ['intervall', 'bytesintervall', 'serviceintervall'];
 
 function assertNoError(error: { message: string } | null) {
   if (error) {
@@ -229,6 +232,29 @@ function buildSearchText(data: Record<string, string>): string {
     .toLowerCase();
 }
 
+function inferFilterComponentType(filterName: string): 'Filter' | 'Kolfilter' {
+  const token = normalizeToken(filterName);
+  if (token.includes('kol') || token.includes('carbon')) {
+    return 'Kolfilter';
+  }
+
+  return 'Filter';
+}
+
+function buildFilterSignature(
+  componentType: string,
+  filterName: string,
+  dimension: string,
+  filterClass: string
+): string {
+  return [
+    normalizeToken(componentType),
+    normalizeToken(filterName),
+    normalizeToken(dimension),
+    normalizeToken(filterClass)
+  ].join('|');
+}
+
 export async function ensureFilterComponentInFilterList(
   aggregate: AggregateRecord,
   payload: CreateAggregateComponentPayload
@@ -316,4 +342,210 @@ export async function ensureFilterComponentInFilterList(
 
   assertNoError(insertError);
   return true;
+}
+
+type SyncFilterListResult = {
+  syncedAggregates: number;
+  insertedFilterComponents: number;
+  skippedNoObjectMatch: number;
+  skippedNoFilterData: number;
+  skippedExistingFilter: number;
+};
+
+type AggregateLiteRow = {
+  id: string;
+  system_position_id: string;
+  fl_system_position_id: string | null;
+  se_system_position_id: string | null;
+};
+
+type ComponentLiteRow = {
+  aggregate_id: string;
+  component_type: string;
+  identified_value: string;
+  attributes: Record<string, unknown> | null;
+};
+
+export async function syncFilterListRowsToAggregates(
+  rows: ImportedFilterListRow[]
+): Promise<SyncFilterListResult> {
+  const supabase = getSupabaseServerClient();
+
+  const { data: aggregatesData, error: aggregatesError } = await supabase
+    .from('ventilation_aggregates')
+    .select('id, system_position_id, fl_system_position_id, se_system_position_id')
+    .limit(10000);
+
+  assertNoError(aggregatesError);
+
+  const aggregates = (aggregatesData ?? []) as AggregateLiteRow[];
+  if (!aggregates.length || !rows.length) {
+    return {
+      syncedAggregates: 0,
+      insertedFilterComponents: 0,
+      skippedNoObjectMatch: rows.length,
+      skippedNoFilterData: 0,
+      skippedExistingFilter: 0
+    };
+  }
+
+  const { data: componentsData, error: componentsError } = await supabase
+    .from('ventilation_components')
+    .select('aggregate_id, component_type, identified_value, attributes')
+    .in('aggregate_id', aggregates.map((aggregate) => aggregate.id))
+    .in('component_type', ['Filter', 'Kolfilter']);
+
+  assertNoError(componentsError);
+
+  const existingSignaturesByAggregate = new Map<string, Set<string>>();
+  for (const row of (componentsData ?? []) as ComponentLiteRow[]) {
+    const attrs = toStringRecord(row.attributes);
+    const signature = buildFilterSignature(
+      row.component_type,
+      attrs.filterNamn || row.identified_value || '',
+      attrs.dimension || '',
+      attrs.filterklass || ''
+    );
+
+    const current = existingSignaturesByAggregate.get(row.aggregate_id) ?? new Set<string>();
+    current.add(signature);
+    existingSignaturesByAggregate.set(row.aggregate_id, current);
+  }
+
+  const normalizedPositions = new Map<
+    string,
+    { aggregateId: string; source: 'AG' | 'FL' | 'SE' }[]
+  >();
+
+  for (const aggregate of aggregates) {
+    const positions: Array<[string, 'AG' | 'FL' | 'SE']> = [
+      [aggregate.system_position_id, 'AG'],
+      [aggregate.fl_system_position_id ?? '', 'FL'],
+      [aggregate.se_system_position_id ?? '', 'SE']
+    ];
+
+    for (const [value, source] of positions) {
+      const token = normalizeToken(value);
+      if (!token) {
+        continue;
+      }
+
+      const list = normalizedPositions.get(token) ?? [];
+      list.push({ aggregateId: aggregate.id, source });
+      normalizedPositions.set(token, list);
+    }
+  }
+
+  const pendingInserts: Array<{
+    aggregate_id: string;
+    component_type: 'Filter' | 'Kolfilter';
+    identified_value: string;
+    notes: string;
+    assembly: string;
+    sub_component: string;
+    attributes: Record<string, string>;
+  }> = [];
+
+  const touchedAggregates = new Set<string>();
+  let skippedNoObjectMatch = 0;
+  let skippedNoFilterData = 0;
+  let skippedExistingFilter = 0;
+
+  for (const row of rows) {
+    const obNumber = findValueByAliases(row.data, OB_KEY_ALIASES);
+    const filterName = findValueByAliases(row.data, FILTER_KEY_ALIASES);
+
+    if (!obNumber || !filterName) {
+      skippedNoFilterData += 1;
+      continue;
+    }
+
+    const normalizedOb = normalizeToken(obNumber);
+    if (!normalizedOb) {
+      skippedNoObjectMatch += 1;
+      continue;
+    }
+
+    const matches = normalizedPositions.get(normalizedOb) ?? [];
+    if (!matches.length) {
+      skippedNoObjectMatch += 1;
+      continue;
+    }
+
+    const dimension = findValueByAliases(row.data, DIMENSION_KEY_ALIASES);
+    const filterClass = findValueByAliases(row.data, KLASS_KEY_ALIASES);
+    const antal = findValueByAliases(row.data, ANTAL_KEY_ALIASES);
+    const placering = findValueByAliases(row.data, PLACERING_KEY_ALIASES);
+    const intervall = findValueByAliases(row.data, INTERVALL_KEY_ALIASES);
+    const componentType = inferFilterComponentType(filterName);
+    const signature = buildFilterSignature(
+      componentType,
+      filterName,
+      dimension,
+      filterClass
+    );
+
+    for (const match of matches) {
+      const signatures = existingSignaturesByAggregate.get(match.aggregateId) ?? new Set<string>();
+      if (signatures.has(signature)) {
+        skippedExistingFilter += 1;
+        continue;
+      }
+
+      signatures.add(signature);
+      existingSignaturesByAggregate.set(match.aggregateId, signatures);
+      touchedAggregates.add(match.aggregateId);
+
+      const notesParts = [`Synkad fran filterlista (rad ${row.rowNumber}, match ${match.source})`];
+      if (placering) {
+        notesParts.push(`Placering: ${placering}`);
+      }
+      if (intervall) {
+        notesParts.push(`Intervall: ${intervall}`);
+      }
+
+      pendingInserts.push({
+        aggregate_id: match.aggregateId,
+        component_type: componentType,
+        identified_value: filterName,
+        notes: notesParts.join(' | '),
+        assembly: 'Aggregat',
+        sub_component: componentType,
+        attributes: {
+          filterNamn: filterName,
+          filterklass: filterClass,
+          dimension,
+          antal
+        }
+      });
+    }
+  }
+
+  let insertedFilterComponents = 0;
+  if (pendingInserts.length > 0) {
+    const chunkSize = 500;
+    for (let i = 0; i < pendingInserts.length; i += chunkSize) {
+      const chunk = pendingInserts.slice(i, i + chunkSize);
+      const { error } = await supabase.from('ventilation_components').insert(chunk);
+      assertNoError(error);
+      insertedFilterComponents += chunk.length;
+    }
+  }
+
+  if (touchedAggregates.size > 0) {
+    const { error: touchError } = await supabase
+      .from('ventilation_aggregates')
+      .update({ updated_at: new Date().toISOString() })
+      .in('id', Array.from(touchedAggregates));
+
+    assertNoError(touchError);
+  }
+
+  return {
+    syncedAggregates: touchedAggregates.size,
+    insertedFilterComponents,
+    skippedNoObjectMatch,
+    skippedNoFilterData,
+    skippedExistingFilter
+  };
 }
