@@ -1,6 +1,7 @@
 'use client';
 
 import { CameraCapture } from '@/components/CameraCapture';
+import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
 import {
   addAggregateComponent,
   analyzeComponentImage,
@@ -1244,6 +1245,9 @@ export default function HomePage() {
           >
             Bibliotek
           </button>
+        </div>
+        <div className={styles.installPromptRow}>
+          <PwaInstallPrompt />
         </div>
       </header>
 
