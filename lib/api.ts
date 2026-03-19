@@ -70,34 +70,16 @@ export async function createObservation(
 export async function analyzeSystemPosition(
   imageDataUrl: string
 ): Promise<SystemPositionAnalysis> {
-  const response = await fetch(toApiUrl('/api/ai/systemposition'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageDataUrl })
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseError(response));
-  }
-
-  return (await response.json()) as SystemPositionAnalysis;
+  const { analyzeSystemPositionLocally } = await import('./client/freeOcr');
+  return analyzeSystemPositionLocally(imageDataUrl);
 }
 
 export async function analyzeComponentImage(
   componentType: string,
   imageDataUrl: string
 ): Promise<ComponentAnalysis> {
-  const response = await fetch(toApiUrl('/api/ai/component'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ componentType, imageDataUrl })
-  });
-
-  if (!response.ok) {
-    throw new Error(await parseError(response));
-  }
-
-  return (await response.json()) as ComponentAnalysis;
+  const { analyzeComponentLocally } = await import('./client/freeOcr');
+  return analyzeComponentLocally(componentType, imageDataUrl);
 }
 
 export async function createAggregate(
