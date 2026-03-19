@@ -82,8 +82,7 @@ function sanitizeSystemPositionId(value: string | undefined): string {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9-]/g, '')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 function isLikelySystemPositionId(value: string): boolean {
@@ -92,7 +91,7 @@ function isLikelySystemPositionId(value: string): boolean {
   }
 
   const normalized = sanitizeSystemPositionId(value);
-  if (!normalized || normalized.length < 4) {
+  if (!normalized || normalized.length < 8 || normalized.length > 9) {
     return false;
   }
 
@@ -108,7 +107,7 @@ function isLikelySystemPositionId(value: string): boolean {
     return false;
   }
 
-  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+  return /^\d{3}[A-Z]{2}\d{3,4}$/.test(normalized);
 }
 
 function scoreSystemPositionCandidate(value: string): number {

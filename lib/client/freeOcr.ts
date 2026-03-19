@@ -34,31 +34,9 @@ const SYSTEM_ID_BLACKLIST = new Set([
   'N/A',
   'NA'
 ]);
+const SYSTEM_ID_PATTERN = /^\d{3}[A-Z]{2}\d{3,4}$/;
 
-const OCR_LETTER_TO_DIGIT: Record<string, string> = {
-  O: '0',
-  Q: '0',
-  D: '0',
-  I: '1',
-  L: '1',
-  Z: '2',
-  A: '4',
-  S: '5',
-  G: '6',
-  T: '7',
-  B: '8'
-};
-
-const OCR_DIGIT_TO_LETTER: Record<string, string> = {
-  '0': 'O',
-  '1': 'I',
-  '2': 'Z',
-  '4': 'A',
-  '5': 'S',
-  '6': 'G',
-  '7': 'T',
-  '8': 'B'
-};
+type Variant = { value: string; penalty: number };
 
 let workerPromise: Promise<LocalWorker> | null = null;
 
@@ -71,13 +49,12 @@ function sanitizeSystemId(value: string | undefined): string {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9-]/g, '')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 function isLikelySystemId(value: string): boolean {
   const normalized = sanitizeSystemId(value);
-  if (!normalized || normalized.length < 4 || normalized.length > 20) {
+  if (!normalized || normalized.length < 8 || normalized.length > 9) {
     return false;
   }
 
@@ -93,7 +70,7 @@ function isLikelySystemId(value: string): boolean {
     return false;
   }
 
-  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+  return SYSTEM_ID_PATTERN.test(normalized);
 }
 
 function scoreSystemIdCandidate(value: string): number {
@@ -102,95 +79,192 @@ function scoreSystemIdCandidate(value: string): number {
     return -1;
   }
 
-  let score = 0;
-  if (/^\d{2,6}[A-Z]{1,4}\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
-    score += 9;
+  const prefix = candidate.slice(0, 3);
+  const middle = candidate.slice(3, 5);
+  const suffix = candidate.slice(5);
+  let score = 30;
+
+  if (/^[0-9]{3}$/.test(prefix)) {
+    score += 6;
   }
-  if (/^[A-Z]{1,6}-?\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
-    score += 7;
+  if (/^[A-Z]{2}$/.test(middle)) {
+    score += 6;
   }
-  if (candidate.includes('-')) {
-    score += 2;
+  if (/^[0-9]{3,4}$/.test(suffix)) {
+    score += 6;
   }
-  if (candidate.length >= 6 && candidate.length <= 12) {
-    score += 3;
+  if (suffix.length === 4) {
+    score += 1;
   }
 
-  const transitions = candidate.match(/[0-9][A-Z]|[A-Z][0-9]/g)?.length ?? 0;
-  score += Math.min(3, transitions);
   return score;
 }
 
-function normalizeToDigits(segment: string): string | null {
-  let output = '';
+function digitVariantsForChar(char: string): Variant[] {
+  if (/^[0-9]$/.test(char)) {
+    return [{ value: char, penalty: 0 }];
+  }
+
+  switch (char) {
+    case 'O':
+    case 'Q':
+      return [{ value: '0', penalty: 0.12 }];
+    case 'D':
+      return [{ value: '0', penalty: 0.22 }];
+    case 'I':
+    case 'L':
+      return [{ value: '1', penalty: 0.18 }];
+    case 'Z':
+      return [{ value: '2', penalty: 0.24 }];
+    case 'A':
+      return [{ value: '4', penalty: 0.18 }];
+    case 'S':
+      return [
+        { value: '8', penalty: 0.12 },
+        { value: '5', penalty: 0.28 }
+      ];
+    case 'G':
+      return [{ value: '6', penalty: 0.26 }];
+    case 'T':
+      return [{ value: '7', penalty: 0.28 }];
+    case 'B':
+      return [{ value: '8', penalty: 0.2 }];
+    default:
+      return [];
+  }
+}
+
+function letterVariantsForChar(char: string): Variant[] {
+  if (/^[A-Z]$/.test(char)) {
+    return [{ value: char, penalty: 0 }];
+  }
+
+  switch (char) {
+    case '0':
+      return [{ value: 'O', penalty: 0.2 }];
+    case '1':
+      return [
+        { value: 'I', penalty: 0.2 },
+        { value: 'L', penalty: 0.28 }
+      ];
+    case '2':
+      return [{ value: 'Z', penalty: 0.26 }];
+    case '4':
+      return [{ value: 'A', penalty: 0.24 }];
+    case '5':
+      return [{ value: 'S', penalty: 0.24 }];
+    case '6':
+      return [{ value: 'G', penalty: 0.28 }];
+    case '7':
+      return [{ value: 'T', penalty: 0.28 }];
+    case '8':
+      return [{ value: 'B', penalty: 0.26 }];
+    default:
+      return [];
+  }
+}
+
+function combineVariants(
+  current: Variant[],
+  nextOptions: Variant[],
+  maxVariants: number
+): Variant[] {
+  const combined: Variant[] = [];
+
+  for (const prefix of current) {
+    for (const option of nextOptions) {
+      combined.push({
+        value: `${prefix.value}${option.value}`,
+        penalty: prefix.penalty + option.penalty
+      });
+    }
+  }
+
+  combined.sort((a, b) => a.penalty - b.penalty);
+  return combined.slice(0, maxVariants);
+}
+
+function normalizeToDigitsVariants(segment: string, maxVariants = 8): Variant[] {
+  let variants: Variant[] = [{ value: '', penalty: 0 }];
+
   for (const char of segment) {
-    if (/[0-9]/.test(char)) {
-      output += char;
+    const options = digitVariantsForChar(char);
+    if (!options.length) {
+      return [];
+    }
+
+    variants = combineVariants(variants, options, maxVariants);
+  }
+
+  return variants;
+}
+
+function normalizeToLettersVariants(segment: string, maxVariants = 8): Variant[] {
+  let variants: Variant[] = [{ value: '', penalty: 0 }];
+
+  for (const char of segment) {
+    const options = letterVariantsForChar(char);
+    if (!options.length) {
+      return [];
+    }
+
+    variants = combineVariants(variants, options, maxVariants);
+  }
+
+  return variants;
+}
+
+function buildPatternCorrectedCandidates(rawCandidate: string): Variant[] {
+  const compact = sanitizeSystemId(rawCandidate);
+  if (!compact) {
+    return [];
+  }
+
+  const results = new Map<string, number>();
+
+  const tryPattern = (segment: string) => {
+    const prefix = segment.slice(0, 3);
+    const middle = segment.slice(3, 5);
+    const suffix = segment.slice(5);
+
+    const prefixVariants = normalizeToDigitsVariants(prefix);
+    const middleVariants = normalizeToLettersVariants(middle);
+    const suffixVariants = normalizeToDigitsVariants(suffix);
+
+    if (!prefixVariants.length || !middleVariants.length || !suffixVariants.length) {
+      return;
+    }
+
+    for (const prefixVariant of prefixVariants) {
+      for (const middleVariant of middleVariants) {
+        for (const suffixVariant of suffixVariants) {
+          const value = `${prefixVariant.value}${middleVariant.value}${suffixVariant.value}`;
+          const penalty = prefixVariant.penalty + middleVariant.penalty + suffixVariant.penalty;
+          const current = results.get(value);
+          if (current === undefined || penalty < current) {
+            results.set(value, penalty);
+          }
+        }
+      }
+    }
+  };
+
+  for (const targetLength of [8, 9]) {
+    if (compact.length < targetLength) {
       continue;
     }
 
-    const mapped = OCR_LETTER_TO_DIGIT[char];
-    if (!mapped) {
-      return null;
-    }
-
-    output += mapped;
-  }
-
-  return output;
-}
-
-function normalizeToLetters(segment: string): string | null {
-  let output = '';
-  for (const char of segment) {
-    if (/[A-Z]/.test(char)) {
-      output += char;
-      continue;
-    }
-
-    const mapped = OCR_DIGIT_TO_LETTER[char];
-    if (!mapped) {
-      return null;
-    }
-
-    output += mapped;
-  }
-
-  return output;
-}
-
-function buildPatternCorrectedCandidates(rawCandidate: string): string[] {
-  const candidate = sanitizeSystemId(rawCandidate);
-  if (!candidate || candidate.length < 5 || candidate.length > 14) {
-    return candidate ? [candidate] : [];
-  }
-
-  const results = new Set<string>([candidate]);
-
-  for (let prefixLen = 2; prefixLen <= 6; prefixLen += 1) {
-    for (let middleLen = 1; middleLen <= 4; middleLen += 1) {
-      const suffixLen = candidate.length - prefixLen - middleLen;
-      if (suffixLen < 2 || suffixLen > 8) {
-        continue;
-      }
-
-      const prefix = candidate.slice(0, prefixLen);
-      const middle = candidate.slice(prefixLen, prefixLen + middleLen);
-      const suffix = candidate.slice(prefixLen + middleLen);
-
-      const normalizedPrefix = normalizeToDigits(prefix);
-      const normalizedMiddle = normalizeToLetters(middle);
-      const normalizedSuffix = normalizeToDigits(suffix);
-
-      if (!normalizedPrefix || !normalizedMiddle || !normalizedSuffix) {
-        continue;
-      }
-
-      results.add(`${normalizedPrefix}${normalizedMiddle}${normalizedSuffix}`);
+    for (let offset = 0; offset <= compact.length - targetLength; offset += 1) {
+      const segment = compact.slice(offset, offset + targetLength);
+      tryPattern(segment);
     }
   }
 
-  return Array.from(results);
+  if (compact.length === 8 || compact.length === 9) {
+    results.set(compact, 0);
+  }
+
+  return Array.from(results.entries()).map(([value, penalty]) => ({ value, penalty }));
 }
 
 function extractSystemIdFromText(rawText: string): string {
@@ -204,20 +278,23 @@ function extractSystemIdFromText(rawText: string): string {
   let bestScore = -1;
 
   const evaluate = (candidate: string, bonus = 0) => {
-    for (const normalized of buildPatternCorrectedCandidates(candidate)) {
-      const score = scoreSystemIdCandidate(normalized);
+    for (const variant of buildPatternCorrectedCandidates(candidate)) {
+      const score = scoreSystemIdCandidate(variant.value);
       if (score < 0) {
         continue;
       }
 
-      const correctionBonus = normalized === sanitizeSystemId(candidate) ? 0 : 4;
-      const finalScore = score + bonus + correctionBonus;
+      const correctionBonus = variant.value === sanitizeSystemId(candidate) ? 0 : 4;
+      const lengthPenalty = variant.value.length === 9 ? 0.75 : 0;
+      const conversionPenalty = variant.penalty * 3;
+      const finalScore =
+        score + bonus + correctionBonus - lengthPenalty - conversionPenalty;
       if (
         finalScore > bestScore ||
-        (finalScore === bestScore && normalized.length > best.length)
+        (finalScore === bestScore && variant.value.length > best.length)
       ) {
         bestScore = finalScore;
-        best = normalized;
+        best = variant.value;
       }
     }
   };
@@ -240,9 +317,10 @@ function extractSystemIdFromText(rawText: string): string {
         }
 
         evaluate(slice.join(''), 2);
-        evaluate(slice.join('-'), 1);
       }
     }
+
+    evaluate(words.join(''), 1);
   }
 
   return best;

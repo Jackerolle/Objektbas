@@ -13,16 +13,15 @@ function normalizeSystemPositionId(value: string): string {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9-]/g, '')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 function isValidSystemPositionId(value: string): boolean {
-  if (!value || value.length < 4 || value.length > 20) {
+  if (!value || value.length < 8 || value.length > 9) {
     return false;
   }
 
-  if (!/[A-Z]/.test(value) || !/[0-9]/.test(value)) {
+  if (!/^\d{3}[A-Z]{2}\d{3,4}$/.test(value)) {
     return false;
   }
 
