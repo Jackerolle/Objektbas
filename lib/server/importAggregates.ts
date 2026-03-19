@@ -15,6 +15,8 @@ export type ImportedComponent = {
 
 export type ImportedAggregate = {
   systemPositionId: string;
+  flSystemPositionId?: string;
+  seSystemPositionId?: string;
   position?: string;
   department?: string;
   notes?: string;
@@ -127,17 +129,39 @@ export function parseAggregateWorkbook(buffer: Buffer): ParsedImportPayload {
     }
 
     const position = pickValue(row, ['position']);
+    const flSystemPositionId = pickValue(row, [
+      'flSystemPositionId',
+      'fl_system_position_id',
+      'flSystemposition',
+      'fl-position',
+      'fl'
+    ]);
+    const seSystemPositionId = pickValue(row, [
+      'seSystemPositionId',
+      'se_system_position_id',
+      'seSystemposition',
+      'se-position',
+      'se'
+    ]);
     const department = pickValue(row, ['department', 'avdelning']);
     const notes = pickValue(row, ['notes', 'kommentar', 'aggregateNotes']);
 
     const existing = grouped.get(systemPositionId) ?? {
       systemPositionId,
+      flSystemPositionId: flSystemPositionId || undefined,
+      seSystemPositionId: seSystemPositionId || undefined,
       position: position || undefined,
       department: department || undefined,
       notes: notes || undefined,
       components: []
     };
 
+    if (!existing.flSystemPositionId && flSystemPositionId) {
+      existing.flSystemPositionId = flSystemPositionId;
+    }
+    if (!existing.seSystemPositionId && seSystemPositionId) {
+      existing.seSystemPositionId = seSystemPositionId;
+    }
     if (!existing.position && position) {
       existing.position = position;
     }

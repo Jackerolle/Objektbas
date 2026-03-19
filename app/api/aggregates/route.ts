@@ -57,7 +57,7 @@ export async function POST(request: Request) {
 
     if (!payload.systemPositionId?.trim()) {
       return NextResponse.json(
-        { error: 'Systempositionens ID krävs.' },
+        { error: 'AG-systempositionens ID krävs.' },
         { status: 400 }
       );
     }

@@ -6,6 +6,12 @@ create extension if not exists pgcrypto;
 create table if not exists public.ventilation_aggregates (
   id uuid primary key default gen_random_uuid(),
   system_position_id text not null check (length(trim(system_position_id)) > 0),
+  fl_system_position_id text null check (
+    fl_system_position_id is null or length(trim(fl_system_position_id)) > 0
+  ),
+  se_system_position_id text null check (
+    se_system_position_id is null or length(trim(se_system_position_id)) > 0
+  ),
   position text null,
   department text null,
   notes text null,
@@ -27,6 +33,12 @@ create table if not exists public.ventilation_components (
 
 create index if not exists idx_vent_aggregates_system_position
   on public.ventilation_aggregates(system_position_id);
+
+create index if not exists idx_vent_aggregates_fl_system_position
+  on public.ventilation_aggregates(fl_system_position_id);
+
+create index if not exists idx_vent_aggregates_se_system_position
+  on public.ventilation_aggregates(se_system_position_id);
 
 create unique index if not exists idx_vent_aggregates_system_position_unique_ci
   on public.ventilation_aggregates ((lower(trim(system_position_id))));

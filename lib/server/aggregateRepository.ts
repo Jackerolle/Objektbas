@@ -8,6 +8,8 @@ import { getSupabaseServerClient } from '@/lib/server/supabase';
 type AggregateRow = {
   id: string;
   system_position_id: string;
+  fl_system_position_id: string | null;
+  se_system_position_id: string | null;
   position: string | null;
   department: string | null;
   notes: string | null;
@@ -40,10 +42,21 @@ function toAttributes(value: Record<string, unknown> | null): Record<string, str
   return result;
 }
 
+function normalizeOptionalSystemPosition(value: string | undefined): string | null {
+  const next = value?.trim();
+  return next ? next.toUpperCase() : null;
+}
+
+function hasOwn(payload: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(payload, key);
+}
+
 function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): AggregateRecord {
   return {
     id: row.id,
     systemPositionId: row.system_position_id,
+    flSystemPositionId: row.fl_system_position_id ?? undefined,
+    seSystemPositionId: row.se_system_position_id ?? undefined,
     position: row.position ?? undefined,
     department: row.department ?? undefined,
     notes: row.notes ?? undefined,
@@ -66,25 +79,6 @@ function assertNoError(error: { message: string } | null) {
   if (error) {
     throw new Error(error.message);
   }
-}
-
-function normalizeSystemPositionId(value: string): string {
-  return value
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9]/g, '');
-}
-
-function ensureValidSystemPositionId(value: string): string {
-  const normalized = normalizeSystemPositionId(value);
-  if (!/^\d{3}[A-Z]{2}\d{3,4}$/.test(normalized)) {
-    throw new Error(
-      'Ogiltigt systempositions-ID. Formatet maste vara 3 siffror + 2 bokstaver + 3-4 siffror.'
-    );
-  }
-
-  return normalized;
 }
 
 async function loadComponentsByAggregateIds(ids: string[]) {
@@ -135,6 +129,8 @@ export async function listAggregates(query: string): Promise<AggregateRecord[]> 
   return records.filter((record) => {
     const directMatch = [
       record.systemPositionId,
+      record.flSystemPositionId,
+      record.seSystemPositionId,
       record.position,
       record.department,
       record.notes
@@ -214,20 +210,35 @@ export async function findLatestAggregateBySystemPositionId(
 
 export async function updateAggregateMetadata(
   aggregateId: string,
-  fields: Pick<CreateAggregatePayload, 'position' | 'department' | 'notes'>
+  fields: Pick<
+    CreateAggregatePayload,
+    'position' | 'department' | 'notes' | 'flSystemPositionId' | 'seSystemPositionId'
+  >
 ): Promise<AggregateRecord | null> {
-  const patch: Record<string, string> = {};
+  const patch: Record<string, string | null> = {};
 
-  if (fields.position?.trim()) {
-    patch.position = fields.position.trim();
+  if (hasOwn(fields, 'position')) {
+    patch.position = fields.position?.trim() || null;
   }
 
-  if (fields.department?.trim()) {
-    patch.department = fields.department.trim();
+  if (hasOwn(fields, 'department')) {
+    patch.department = fields.department?.trim() || null;
   }
 
-  if (fields.notes?.trim()) {
-    patch.notes = fields.notes.trim();
+  if (hasOwn(fields, 'notes')) {
+    patch.notes = fields.notes?.trim() || null;
+  }
+
+  if (hasOwn(fields, 'flSystemPositionId')) {
+    patch.fl_system_position_id = normalizeOptionalSystemPosition(
+      fields.flSystemPositionId
+    );
+  }
+
+  if (hasOwn(fields, 'seSystemPositionId')) {
+    patch.se_system_position_id = normalizeOptionalSystemPosition(
+      fields.seSystemPositionId
+    );
   }
 
   if (Object.keys(patch).length === 0) {
@@ -249,7 +260,13 @@ export async function createAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord> {
   const supabase = getSupabaseServerClient();
-  const normalizedSystemPositionId = ensureValidSystemPositionId(payload.systemPositionId);
+  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+  const normalizedFlSystemPositionId = normalizeOptionalSystemPosition(
+    payload.flSystemPositionId
+  );
+  const normalizedSeSystemPositionId = normalizeOptionalSystemPosition(
+    payload.seSystemPositionId
+  );
 
   const { data: existingRows, error: existingError } = await supabase
     .from('ventilation_aggregates')
@@ -262,13 +279,29 @@ export async function createAggregateRecord(
 
   const existingId = (existingRows as Array<{ id: string }> | null)?.[0]?.id;
   if (existingId) {
-    const updated = await updateAggregateRecord(existingId, {
-      ...payload,
-      systemPositionId: normalizedSystemPositionId
-    });
+    const shouldUpdateExisting =
+      hasOwn(payload, 'position') ||
+      hasOwn(payload, 'department') ||
+      hasOwn(payload, 'notes') ||
+      hasOwn(payload, 'flSystemPositionId') ||
+      hasOwn(payload, 'seSystemPositionId');
 
-    if (updated) {
-      return updated;
+    if (shouldUpdateExisting) {
+      const updated = await updateAggregateRecord(existingId, {
+        ...payload,
+        systemPositionId: normalizedSystemPositionId,
+        flSystemPositionId: normalizedFlSystemPositionId ?? undefined,
+        seSystemPositionId: normalizedSeSystemPositionId ?? undefined
+      });
+
+      if (updated) {
+        return updated;
+      }
+    } else {
+      const existing = await getAggregateById(existingId);
+      if (existing) {
+        return existing;
+      }
     }
   }
 
@@ -276,9 +309,11 @@ export async function createAggregateRecord(
     .from('ventilation_aggregates')
     .insert({
       system_position_id: normalizedSystemPositionId,
-      position: payload.position ?? null,
-      department: payload.department ?? null,
-      notes: payload.notes ?? null
+      fl_system_position_id: normalizedFlSystemPositionId,
+      se_system_position_id: normalizedSeSystemPositionId,
+      position: payload.position?.trim() || null,
+      department: payload.department?.trim() || null,
+      notes: payload.notes?.trim() || null
     })
     .select('*')
     .single();
@@ -293,15 +328,38 @@ export async function updateAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord | null> {
   const supabase = getSupabaseServerClient();
-  const normalizedSystemPositionId = ensureValidSystemPositionId(payload.systemPositionId);
+  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+  const existing = await getAggregateById(aggregateId);
+
+  if (!existing) {
+    return null;
+  }
+
+  const nextFlSystemPositionId = hasOwn(payload, 'flSystemPositionId')
+    ? normalizeOptionalSystemPosition(payload.flSystemPositionId)
+    : existing.flSystemPositionId ?? null;
+  const nextSeSystemPositionId = hasOwn(payload, 'seSystemPositionId')
+    ? normalizeOptionalSystemPosition(payload.seSystemPositionId)
+    : existing.seSystemPositionId ?? null;
+  const nextPosition = hasOwn(payload, 'position')
+    ? payload.position?.trim() || null
+    : existing.position ?? null;
+  const nextDepartment = hasOwn(payload, 'department')
+    ? payload.department?.trim() || null
+    : existing.department ?? null;
+  const nextNotes = hasOwn(payload, 'notes')
+    ? payload.notes?.trim() || null
+    : existing.notes ?? null;
 
   const { data, error } = await supabase
     .from('ventilation_aggregates')
     .update({
       system_position_id: normalizedSystemPositionId,
-      position: payload.position ?? null,
-      department: payload.department ?? null,
-      notes: payload.notes ?? null,
+      fl_system_position_id: nextFlSystemPositionId,
+      se_system_position_id: nextSeSystemPositionId,
+      position: nextPosition,
+      department: nextDepartment,
+      notes: nextNotes,
       updated_at: new Date().toISOString()
     })
     .eq('id', aggregateId)

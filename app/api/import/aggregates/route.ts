@@ -41,6 +41,8 @@ export async function POST(request: Request) {
         warnings: payload.warnings,
         previewAggregates: payload.aggregates.slice(0, 50).map((aggregate) => ({
           systemPositionId: aggregate.systemPositionId,
+          flSystemPositionId: aggregate.flSystemPositionId,
+          seSystemPositionId: aggregate.seSystemPositionId,
           position: aggregate.position,
           department: aggregate.department,
           notes: aggregate.notes,
@@ -62,16 +64,28 @@ export async function POST(request: Request) {
       if (!target) {
         target = await createAggregateRecord({
           systemPositionId: aggregate.systemPositionId,
-          position: aggregate.position,
-          department: aggregate.department,
-          notes: aggregate.notes
+          ...(aggregate.flSystemPositionId
+            ? { flSystemPositionId: aggregate.flSystemPositionId }
+            : {}),
+          ...(aggregate.seSystemPositionId
+            ? { seSystemPositionId: aggregate.seSystemPositionId }
+            : {}),
+          ...(aggregate.position ? { position: aggregate.position } : {}),
+          ...(aggregate.department ? { department: aggregate.department } : {}),
+          ...(aggregate.notes ? { notes: aggregate.notes } : {})
         });
         createdAggregates += 1;
       } else {
         const updated = await updateAggregateMetadata(target.id, {
-          position: aggregate.position,
-          department: aggregate.department,
-          notes: aggregate.notes
+          ...(aggregate.flSystemPositionId
+            ? { flSystemPositionId: aggregate.flSystemPositionId }
+            : {}),
+          ...(aggregate.seSystemPositionId
+            ? { seSystemPositionId: aggregate.seSystemPositionId }
+            : {}),
+          ...(aggregate.position ? { position: aggregate.position } : {}),
+          ...(aggregate.department ? { department: aggregate.department } : {}),
+          ...(aggregate.notes ? { notes: aggregate.notes } : {})
         });
 
         if (updated) {
