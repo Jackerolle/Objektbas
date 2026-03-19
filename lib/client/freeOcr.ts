@@ -34,6 +34,7 @@ const SYSTEM_ID_BLACKLIST = new Set([
   'N/A',
   'NA'
 ]);
+const SYSTEM_ID_PATTERN = /^\d{3}[A-Z]{2}\d{3,4}$/;
 
 const OCR_LETTER_TO_DIGIT: Record<string, string> = {
   O: '0',
@@ -71,13 +72,12 @@ function sanitizeSystemId(value: string | undefined): string {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9-]/g, '')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 function isLikelySystemId(value: string): boolean {
   const normalized = sanitizeSystemId(value);
-  if (!normalized || normalized.length < 4 || normalized.length > 20) {
+  if (!normalized || normalized.length < 8 || normalized.length > 9) {
     return false;
   }
 
@@ -93,7 +93,7 @@ function isLikelySystemId(value: string): boolean {
     return false;
   }
 
-  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+  return SYSTEM_ID_PATTERN.test(normalized);
 }
 
 function scoreSystemIdCandidate(value: string): number {
@@ -102,22 +102,24 @@ function scoreSystemIdCandidate(value: string): number {
     return -1;
   }
 
-  let score = 0;
-  if (/^\d{2,6}[A-Z]{1,4}\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
-    score += 9;
+  const prefix = candidate.slice(0, 3);
+  const middle = candidate.slice(3, 5);
+  const suffix = candidate.slice(5);
+  let score = 30;
+
+  if (/^[0-9]{3}$/.test(prefix)) {
+    score += 6;
   }
-  if (/^[A-Z]{1,6}-?\d{2,8}[A-Z0-9-]*$/.test(candidate)) {
-    score += 7;
+  if (/^[A-Z]{2}$/.test(middle)) {
+    score += 6;
   }
-  if (candidate.includes('-')) {
-    score += 2;
+  if (/^[0-9]{3,4}$/.test(suffix)) {
+    score += 6;
   }
-  if (candidate.length >= 6 && candidate.length <= 12) {
-    score += 3;
+  if (suffix.length === 4) {
+    score += 1;
   }
 
-  const transitions = candidate.match(/[0-9][A-Z]|[A-Z][0-9]/g)?.length ?? 0;
-  score += Math.min(3, transitions);
   return score;
 }
 
@@ -160,34 +162,42 @@ function normalizeToLetters(segment: string): string | null {
 }
 
 function buildPatternCorrectedCandidates(rawCandidate: string): string[] {
-  const candidate = sanitizeSystemId(rawCandidate);
-  if (!candidate || candidate.length < 5 || candidate.length > 14) {
-    return candidate ? [candidate] : [];
+  const compact = sanitizeSystemId(rawCandidate);
+  if (!compact) {
+    return [];
   }
 
-  const results = new Set<string>([candidate]);
+  const results = new Set<string>();
 
-  for (let prefixLen = 2; prefixLen <= 6; prefixLen += 1) {
-    for (let middleLen = 1; middleLen <= 4; middleLen += 1) {
-      const suffixLen = candidate.length - prefixLen - middleLen;
-      if (suffixLen < 2 || suffixLen > 8) {
-        continue;
-      }
+  const tryPattern = (segment: string) => {
+    const prefix = segment.slice(0, 3);
+    const middle = segment.slice(3, 5);
+    const suffix = segment.slice(5);
 
-      const prefix = candidate.slice(0, prefixLen);
-      const middle = candidate.slice(prefixLen, prefixLen + middleLen);
-      const suffix = candidate.slice(prefixLen + middleLen);
+    const normalizedPrefix = normalizeToDigits(prefix);
+    const normalizedMiddle = normalizeToLetters(middle);
+    const normalizedSuffix = normalizeToDigits(suffix);
 
-      const normalizedPrefix = normalizeToDigits(prefix);
-      const normalizedMiddle = normalizeToLetters(middle);
-      const normalizedSuffix = normalizeToDigits(suffix);
-
-      if (!normalizedPrefix || !normalizedMiddle || !normalizedSuffix) {
-        continue;
-      }
-
-      results.add(`${normalizedPrefix}${normalizedMiddle}${normalizedSuffix}`);
+    if (!normalizedPrefix || !normalizedMiddle || !normalizedSuffix) {
+      return;
     }
+
+    results.add(`${normalizedPrefix}${normalizedMiddle}${normalizedSuffix}`);
+  };
+
+  for (const targetLength of [8, 9]) {
+    if (compact.length < targetLength) {
+      continue;
+    }
+
+    for (let offset = 0; offset <= compact.length - targetLength; offset += 1) {
+      const segment = compact.slice(offset, offset + targetLength);
+      tryPattern(segment);
+    }
+  }
+
+  if (compact.length === 8 || compact.length === 9) {
+    results.add(compact);
   }
 
   return Array.from(results);
@@ -240,9 +250,10 @@ function extractSystemIdFromText(rawText: string): string {
         }
 
         evaluate(slice.join(''), 2);
-        evaluate(slice.join('-'), 1);
       }
     }
+
+    evaluate(words.join(''), 1);
   }
 
   return best;

@@ -68,6 +68,25 @@ function assertNoError(error: { message: string } | null) {
   }
 }
 
+function normalizeSystemPositionId(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+function ensureValidSystemPositionId(value: string): string {
+  const normalized = normalizeSystemPositionId(value);
+  if (!/^\d{3}[A-Z]{2}\d{3,4}$/.test(normalized)) {
+    throw new Error(
+      'Ogiltigt systempositions-ID. Formatet maste vara 3 siffror + 2 bokstaver + 3-4 siffror.'
+    );
+  }
+
+  return normalized;
+}
+
 async function loadComponentsByAggregateIds(ids: string[]) {
   if (!ids.length) {
     return new Map<string, ComponentRow[]>();
@@ -230,7 +249,7 @@ export async function createAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord> {
   const supabase = getSupabaseServerClient();
-  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+  const normalizedSystemPositionId = ensureValidSystemPositionId(payload.systemPositionId);
 
   const { data: existingRows, error: existingError } = await supabase
     .from('ventilation_aggregates')
@@ -274,7 +293,7 @@ export async function updateAggregateRecord(
   payload: CreateAggregatePayload
 ): Promise<AggregateRecord | null> {
   const supabase = getSupabaseServerClient();
-  const normalizedSystemPositionId = payload.systemPositionId.trim().toUpperCase();
+  const normalizedSystemPositionId = ensureValidSystemPositionId(payload.systemPositionId);
 
   const { data, error } = await supabase
     .from('ventilation_aggregates')

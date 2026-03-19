@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { CameraCapture } from '@/components/CameraCapture';
 import {
@@ -55,7 +55,7 @@ const SUB_COMPONENT_PRESETS: Record<AssemblyOption, string[]> = {
 
 const DEPARTMENT_PRESETS = [
   'Produktion',
-  'Underhåll',
+  'UnderhÃ¥ll',
   'Energi',
   'Logistik',
   'Verkstad',
@@ -66,13 +66,13 @@ const CAPTURE_TASKS: CaptureTask[] = [
   {
     id: 'skylt',
     label: 'Objektskylt',
-    description: 'Steg 1: läs system-ID och skapa aggregat.',
+    description: 'Steg 1: lÃ¤s system-ID och skapa aggregat.',
     required: true
   },
   {
     id: 'kilrem',
     label: 'Kilrem',
-    description: 'Profil, längd och antal remmar.',
+    description: 'Profil, lÃ¤ngd och antal remmar.',
     componentType: 'Kilrem'
   },
   {
@@ -141,7 +141,7 @@ function normalizeAutoAttributes(
 
   for (const field of COMPONENT_FIELD_CONFIG[componentType]) {
     const value = suggested?.[field.key]?.trim();
-    template[field.key] = value || 'Ej avläst';
+    template[field.key] = value || 'Ej avlÃ¤st';
   }
 
   return template;
@@ -156,8 +156,7 @@ function normalizeSystemPositionId(value: string | undefined): string {
     .trim()
     .toUpperCase()
     .replace(/\s+/g, '')
-    .replace(/[^A-Z0-9-]/g, '')
-    .replace(/^-+|-+$/g, '');
+    .replace(/[^A-Z0-9]/g, '');
 }
 
 function isUsableDetectedSystemPositionId(value: string): boolean {
@@ -166,7 +165,7 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
     return false;
   }
 
-  if (normalized.length < 4) {
+  if (normalized.length < 8 || normalized.length > 9) {
     return false;
   }
 
@@ -182,7 +181,7 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
     return false;
   }
 
-  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+  return /^\d{3}[A-Z]{2}\d{3,4}$/.test(normalized);
 }
 
 function extractSystemPositionCandidateFromNotes(value: string | undefined): string {
@@ -191,7 +190,7 @@ function extractSystemPositionCandidateFromNotes(value: string | undefined): str
   }
 
   const matches = value.matchAll(
-    /(OCR-kandidat|Direkt-kandidat)\s*:\s*([A-Z0-9-]{4,24})/gi
+    /(OCR-kandidat|Direkt-kandidat)\s*:\s*([A-Z0-9]{8,9})/gi
   );
 
   for (const match of matches) {
@@ -586,8 +585,8 @@ export default function HomePage() {
     setIsAddModalOpen(false);
     setStatus(
       method === 'foto'
-        ? 'Startläge: fota objektskylt.'
-        : 'Startläge: lägg in manuellt (fyll i systemposition och skapa aggregat).'
+        ? 'StartlÃ¤ge: fota objektskylt.'
+        : 'StartlÃ¤ge: lÃ¤gg in manuellt (fyll i systemposition och skapa aggregat).'
     );
   };
 
@@ -601,7 +600,7 @@ export default function HomePage() {
   const handleTaskSelection = (taskId: string) => {
     const task = findTask(taskId);
     if (!aggregateReady && task.id !== 'skylt') {
-      setError('Steg 1 är alltid objektskylt. Skapa aggregatet först.');
+      setError('Steg 1 Ã¤r alltid objektskylt. Skapa aggregatet fÃ¶rst.');
       return;
     }
 
@@ -634,7 +633,7 @@ export default function HomePage() {
     try {
       await saveAggregateLocalPhoto(aggregateId, taskId, imageDataUrl);
     } catch (localError) {
-      console.warn('Kunde inte spara lokal bild för aggregat', localError);
+      console.warn('Kunde inte spara lokal bild fÃ¶r aggregat', localError);
     }
   };
 
@@ -653,7 +652,7 @@ export default function HomePage() {
         setCapturedPhotos((current) => ({ ...photos, ...current }));
       })
       .catch((localError) => {
-        console.warn('Kunde inte läsa lokala bilder för aggregat', localError);
+        console.warn('Kunde inte lÃ¤sa lokala bilder fÃ¶r aggregat', localError);
       });
 
     return () => {
@@ -669,9 +668,9 @@ export default function HomePage() {
       const query = queryOverride ?? searchQuery;
       const results = await searchAggregates(query);
       setSearchResults(results);
-      setStatus(`${results.length} träffar i biblioteket.`);
+      setStatus(`${results.length} trÃ¤ffar i biblioteket.`);
     } catch (searchError) {
-      setError(`Kunde inte hämta biblioteket: ${String(searchError)}`);
+      setError(`Kunde inte hÃ¤mta biblioteket: ${String(searchError)}`);
     } finally {
       setIsSearching(false);
     }
@@ -715,7 +714,7 @@ export default function HomePage() {
             ? ` Detektering: ${analysis.notes.trim().slice(0, 180)}`
             : '';
           throw new Error(
-            `Kunde inte lasa ID fran skylten. Ange systemposition manuellt och prova igen med ny bild.${reason}`
+            `Kunde inte lasa ID fran skylten. Formatet ska vara 3 siffror + 2 bokstaver + 3-4 siffror (ex: 408FL205). Ange ID manuellt och prova igen med ny bild.${reason}`
           );
         }
 
@@ -752,22 +751,22 @@ export default function HomePage() {
               ? `Objektskylt sparad med OCR-kandidat ${resolvedId}.${providerText} Bekrafta ID manuellt.${analysisNote}`
             : `Objektskylt tolkad (${toPercent(
                 analysis.confidence
-              )}) och aggregat sparat.${providerText} Fortsätt med komponentfoton.${analysisNote}`
+              )}) och aggregat sparat.${providerText} FortsÃ¤tt med komponentfoton.${analysisNote}`
         );
         return;
       }
 
       if (!aggregateReady || !currentAggregate) {
-        throw new Error('Objektskylt måste registreras först för att skapa aggregat.');
+        throw new Error('Objektskylt mÃ¥ste registreras fÃ¶rst fÃ¶r att skapa aggregat.');
       }
 
       if (!task.componentType) {
         throw new Error('Felaktig fotopunkt.');
       }
 
-      let identifiedValue = `Ej avläst (${task.label})`;
+      let identifiedValue = `Ej avlÃ¤st (${task.label})`;
       let attributes = createEmptyAttributes(task.componentType);
-      let note = 'Automatiskt registrerad utan säker AI-tolkning.';
+      let note = 'Automatiskt registrerad utan sÃ¤ker AI-tolkning.';
       setStatus(`Bild mottagen. Laser ${task.label.toLowerCase()} med lokal OCR...`);
 
       try {
@@ -801,7 +800,7 @@ export default function HomePage() {
         .join(' / ');
       setStatus(`${task.label} sparad i aggregatet${scopeText ? ` (${scopeText})` : ''}.`);
     } catch (captureError) {
-      setError(`Kunde inte slutföra ${task.label.toLowerCase()}: ${String(captureError)}`);
+      setError(`Kunde inte slutfÃ¶ra ${task.label.toLowerCase()}: ${String(captureError)}`);
     } finally {
       setIsProcessingCapture(false);
     }
@@ -820,12 +819,18 @@ export default function HomePage() {
       return;
     }
 
+    const normalizedId = normalizeSystemPositionId(systemPositionId);
+    if (!isUsableDetectedSystemPositionId(normalizedId)) {
+      setError('Ogiltigt system-ID. Format: 3 siffror + 2 bokstaver + 3-4 siffror (ex: 408FL205).');
+      return;
+    }
+
     setIsSavingAggregate(true);
 
     try {
       const updated = await updateAggregate(
         currentAggregate.id,
-        buildAggregatePayload(normalizeSystemPositionId(systemPositionId))
+        buildAggregatePayload(normalizedId)
       );
 
       setCurrentAggregate(updated);
@@ -842,13 +847,18 @@ export default function HomePage() {
     clearFeedback();
 
     if (currentAggregate) {
-      setStatus(`Aggregat ${currentAggregate.systemPositionId} är redan aktivt.`);
+      setStatus(`Aggregat ${currentAggregate.systemPositionId} Ã¤r redan aktivt.`);
       return;
     }
 
     const candidateId = normalizeSystemPositionId(systemPositionId);
     if (!candidateId) {
       setError('Ange Systemposition för att skapa aggregat manuellt.');
+      return;
+    }
+
+    if (!isUsableDetectedSystemPositionId(candidateId)) {
+      setError('Ogiltigt system-ID. Format: 3 siffror + 2 bokstaver + 3-4 siffror (ex: 408FL205).');
       return;
     }
 
@@ -1165,7 +1175,7 @@ export default function HomePage() {
     clearFeedback();
 
     const confirmed = window.confirm(
-      `Ta bort aggregat "${aggregate.systemPositionId}" inklusive alla komponenter? Detta går inte att ångra.`
+      `Ta bort aggregat "${aggregate.systemPositionId}" inklusive alla komponenter? Detta gÃ¥r inte att Ã¥ngra.`
     );
     if (!confirmed) {
       return;
@@ -1200,10 +1210,10 @@ export default function HomePage() {
   return (
     <main className={styles.pageRoot}>
       <header className={styles.hero}>
-        <p className={styles.heroKicker}>Objektbas · Ventilation</p>
-        <h1 className={styles.heroTitle}>Enkel dokumentation med foto först</h1>
+        <p className={styles.heroKicker}>Objektbas Â· Ventilation</p>
+        <h1 className={styles.heroTitle}>Enkel dokumentation med foto fÃ¶rst</h1>
         <p className={styles.heroText}>
-          Objektskylt är enda obligatoriska steg. Därefter kan du lägga till och
+          Objektskylt Ã¤r enda obligatoriska steg. DÃ¤refter kan du lÃ¤gga till och
           redigera komponenter utan dubletter i samma aggregat.
         </p>
 
@@ -1214,7 +1224,7 @@ export default function HomePage() {
               mode === 'lagg-till' ? styles.modeButtonActive : ''
             }`}
           >
-            Lägg till aggregat
+            LÃ¤gg till aggregat
           </button>
           <button
             onClick={() => {
@@ -1240,10 +1250,10 @@ export default function HomePage() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2>Hur vill du starta aggregatet?</h2>
-            <p>Välj ett alternativ.</p>
+            <p>VÃ¤lj ett alternativ.</p>
             <div className={styles.choiceButtons}>
               <button onClick={() => chooseStartMethod('foto')}>Fota</button>
-              <button onClick={() => chooseStartMethod('manuell')}>Lägg in manuellt</button>
+              <button onClick={() => chooseStartMethod('manuell')}>LÃ¤gg in manuellt</button>
             </div>
           </section>
         </div>
@@ -1253,8 +1263,8 @@ export default function HomePage() {
         !showAddWorkspace ? (
           <section className={styles.searchCard}>
             <p className={styles.emptyState}>
-              Klicka på <strong>Lägg till aggregat</strong> och välj <strong>Fota</strong> eller{' '}
-              <strong>Lägg in manuellt</strong>.
+              Klicka pÃ¥ <strong>LÃ¤gg till aggregat</strong> och vÃ¤lj <strong>Fota</strong> eller{' '}
+              <strong>LÃ¤gg in manuellt</strong>.
             </p>
             <div className={styles.quickStartActions}>
               <button
@@ -1365,7 +1375,7 @@ export default function HomePage() {
                       onClick={() => void handleCreateAggregateManually()}
                       disabled={isSavingAggregate || isProcessingCapture}
                     >
-                      {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
+                      {isSavingAggregate ? 'Skapar...' : 'LÃ¤gg till manuellt'}
                     </button>
                     <button
                       className={styles.inlineButton}
@@ -1385,8 +1395,8 @@ export default function HomePage() {
                   uploadLabel='Ladda upp foto'
                 helperText={
                   selectedTask.id === 'skylt'
-                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat. Bilden sparas lokalt på enheten.'
-                    : 'Sparas i befintligt aggregat med vald huvudkategori/underkategori. Flera komponenter av samma typ stöds. Bilden sparas lokalt på enheten.'
+                    ? 'Skapar aggregat fÃ¶rsta gÃ¥ngen, eller uppdaterar befintligt aggregat. Bilden sparas lokalt pÃ¥ enheten.'
+                    : 'Sparas i befintligt aggregat med vald huvudkategori/underkategori. Flera komponenter av samma typ stÃ¶ds. Bilden sparas lokalt pÃ¥ enheten.'
                 }
                   disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
                 />
@@ -1449,7 +1459,7 @@ export default function HomePage() {
                   <textarea
                     value={aggregateNotes}
                     onChange={(event) => setAggregateNotes(event.target.value)}
-                    placeholder='Valfri kontext för nästa tekniker.'
+                    placeholder='Valfri kontext fÃ¶r nÃ¤sta tekniker.'
                   />
                 </label>
               </div>
@@ -1460,7 +1470,7 @@ export default function HomePage() {
                   onClick={handleSaveAggregateChanges}
                   disabled={!currentAggregate || isSavingAggregate}
                 >
-                  {isSavingAggregate ? 'Sparar...' : 'Spara ändringar i aggregat'}
+                  {isSavingAggregate ? 'Sparar...' : 'Spara Ã¤ndringar i aggregat'}
                 </button>
                 <button
                   className={styles.dangerButton}
@@ -1474,10 +1484,10 @@ export default function HomePage() {
               </div>
 
               <div className={styles.libraryHint}>
-                <strong>Regel i flödet:</strong>
+                <strong>Regel i flÃ¶det:</strong>
                 <p>
-                  Endast objektskylt är obligatorisk. När aggregatet finns kan du
-                  återkomma senare, uppdatera metadata och lägga till/ändra komponenter.
+                  Endast objektskylt Ã¤r obligatorisk. NÃ¤r aggregatet finns kan du
+                  Ã¥terkomma senare, uppdatera metadata och lÃ¤gga till/Ã¤ndra komponenter.
                 </p>
               </div>
             </article>
@@ -1485,7 +1495,7 @@ export default function HomePage() {
             <article className={styles.card}>
               <div className={styles.cardHeader}>
                 <h2>Manuell registrering (fallback)</h2>
-                <span className={styles.badge}>Använd vid svårläst bild</span>
+                <span className={styles.badge}>AnvÃ¤nd vid svÃ¥rlÃ¤st bild</span>
               </div>
 
               <div className={styles.manualGrid}>
@@ -1551,7 +1561,7 @@ export default function HomePage() {
                   <textarea
                     value={manualNotes}
                     onChange={(event) => setManualNotes(event.target.value)}
-                    placeholder='Exempel: OCR misslyckades, värde kontrollerat manuellt.'
+                    placeholder='Exempel: OCR misslyckades, vÃ¤rde kontrollerat manuellt.'
                   />
                 </label>
               </div>
@@ -1580,14 +1590,14 @@ export default function HomePage() {
                     const attributeSummary = Object.entries(component.attributes)
                       .filter(([, value]) => value?.trim())
                       .map(([key, value]) => `${key}: ${value}`)
-                      .join(' · ');
+                      .join(' Â· ');
 
                     return (
                       <li key={component.id}>
                         <div className={styles.componentItemHeader}>
                           <p>
                             <strong>{component.componentType}</strong>
-                            {component.assembly ? ` · ${component.assembly}` : ''}
+                            {component.assembly ? ` Â· ${component.assembly}` : ''}
                             {component.subComponent ? ` / ${component.subComponent}` : ''}: {component.identifiedValue}
                           </p>
 
@@ -1664,7 +1674,7 @@ export default function HomePage() {
                               <textarea
                                 value={editingNotes}
                                 onChange={(event) => setEditingNotes(event.target.value)}
-                                placeholder='Valfri notering för komponenten.'
+                                placeholder='Valfri notering fÃ¶r komponenten.'
                               />
                             </label>
 
@@ -1674,7 +1684,7 @@ export default function HomePage() {
                                 onClick={() => void handleSaveComponentEdit()}
                                 disabled={isSavingComponentEdit || deletingComponentId === component.id}
                               >
-                                {isSavingComponentEdit ? 'Sparar...' : 'Spara ändring'}
+                                {isSavingComponentEdit ? 'Sparar...' : 'Spara Ã¤ndring'}
                               </button>
                               <button
                                 className={styles.inlineButton}
@@ -1697,7 +1707,7 @@ export default function HomePage() {
                 </ul>
               ) : (
                 <p className={styles.emptyState}>
-                  Inga komponenter sparade ännu. Börja med objektskylt, fortsätt sedan
+                  Inga komponenter sparade Ã¤nnu. BÃ¶rja med objektskylt, fortsÃ¤tt sedan
                   med foto eller manuell registrering.
                 </p>
               )}
@@ -1711,10 +1721,10 @@ export default function HomePage() {
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder='Sök på systemposition, komponent eller fritext'
+              placeholder='SÃ¶k pÃ¥ systemposition, komponent eller fritext'
             />
             <button onClick={() => void handleSearch()} disabled={isSearching}>
-              {isSearching ? 'Söker...' : 'Sök'}
+              {isSearching ? 'SÃ¶ker...' : 'SÃ¶k'}
             </button>
           </div>
 
@@ -1753,14 +1763,14 @@ export default function HomePage() {
                   <span>{new Date(aggregate.updatedAt).toLocaleString('sv-SE')}</span>
                 </header>
                 <p>
-                  Avdelning: {aggregate.department || 'Ej satt'} · Position:{' '}
+                  Avdelning: {aggregate.department || 'Ej satt'} Â· Position:{' '}
                   {aggregate.position || 'Ej satt'}
                 </p>
 
                 {!!aggregate.components.length && (
                   <div className={styles.componentOverview}>
                     <p className={styles.componentOverviewTitle}>
-                      Komponentöversikt ({aggregate.components.length})
+                      KomponentÃ¶versikt ({aggregate.components.length})
                     </p>
                     <ul className={styles.componentOverviewList}>
                       {aggregate.components.map((component) => (
@@ -1798,7 +1808,7 @@ export default function HomePage() {
 
           {!isSearching && filteredSearchResults.length === 0 && (
             <p className={styles.emptyState}>
-              Inga träffar ännu. Registrera objekt via fotoflödet så byggs biblioteket upp.
+              Inga trÃ¤ffar Ã¤nnu. Registrera objekt via fotoflÃ¶det sÃ¥ byggs biblioteket upp.
             </p>
           )}
         </section>
@@ -1806,3 +1816,6 @@ export default function HomePage() {
     </main>
   );
 }
+
+
+
