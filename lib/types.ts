@@ -63,6 +63,8 @@ export type ComponentAnalysis = {
 
 export type CreateAggregatePayload = {
   systemPositionId: string;
+  flSystemPositionId?: string;
+  seSystemPositionId?: string;
   position?: string;
   department?: string;
   notes?: string;
@@ -93,6 +95,8 @@ export type AggregateComponent = {
 export type AggregateRecord = {
   id: string;
   systemPositionId: string;
+  flSystemPositionId?: string;
+  seSystemPositionId?: string;
   position?: string;
   department?: string;
   notes?: string;
@@ -113,6 +117,8 @@ export type ImportAggregatesResult = {
 
 export type ImportPreviewAggregate = {
   systemPositionId: string;
+  flSystemPositionId?: string;
+  seSystemPositionId?: string;
   position?: string;
   department?: string;
   notes?: string;

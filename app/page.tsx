@@ -437,6 +437,8 @@ export default function HomePage() {
   const [capturedPhotos, setCapturedPhotos] = useState<Record<string, string>>({});
 
   const [systemPositionId, setSystemPositionId] = useState('');
+  const [flSystemPositionId, setFlSystemPositionId] = useState('');
+  const [seSystemPositionId, setSeSystemPositionId] = useState('');
   const [department, setDepartment] = useState('');
   const [position, setPosition] = useState('');
   const [aggregateNotes, setAggregateNotes] = useState('');
@@ -579,6 +581,8 @@ export default function HomePage() {
     setCapturedPhotos({});
     setCurrentAggregate(null);
     setSystemPositionId('');
+    setFlSystemPositionId('');
+    setSeSystemPositionId('');
     setDepartment('');
     setPosition('');
     setAggregateNotes('');
@@ -609,12 +613,14 @@ export default function HomePage() {
     setStatus(
       method === 'foto'
         ? 'Startläge: fota objektskylt.'
-        : 'Startläge: lägg in manuellt (fyll i systemposition och skapa aggregat).'
+        : 'Startläge: lägg in manuellt (fyll i AG-systemposition och skapa aggregat).'
     );
   };
 
   const buildAggregatePayload = (systemId: string) => ({
     systemPositionId: normalizeSystemPositionId(systemId),
+    flSystemPositionId: normalizeSystemPositionId(flSystemPositionId) || undefined,
+    seSystemPositionId: normalizeSystemPositionId(seSystemPositionId) || undefined,
     position: position.trim() || undefined,
     department: department.trim() || undefined,
     notes: aggregateNotes.trim() || undefined
@@ -637,7 +643,7 @@ export default function HomePage() {
 
     const candidateId = normalizeSystemPositionId(forcedSystemPositionId || systemPositionId);
     if (!candidateId) {
-      throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
+      throw new Error('AG-systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
     }
 
     const created = await createAggregate(buildAggregatePayload(candidateId));
@@ -645,6 +651,8 @@ export default function HomePage() {
     setCurrentAggregate(created);
     syncAggregateInSearchResults(created);
     setSystemPositionId(created.systemPositionId);
+    setFlSystemPositionId(created.flSystemPositionId ?? '');
+    setSeSystemPositionId(created.seSystemPositionId ?? '');
     return created;
   };
 
@@ -834,7 +842,7 @@ export default function HomePage() {
     }
 
     if (!systemPositionId.trim()) {
-      setError('Systemposition krävs.');
+      setError('AG-systemposition krävs.');
       return;
     }
 
@@ -848,6 +856,9 @@ export default function HomePage() {
 
       setCurrentAggregate(updated);
       syncAggregateInSearchResults(updated);
+      setSystemPositionId(updated.systemPositionId);
+      setFlSystemPositionId(updated.flSystemPositionId ?? '');
+      setSeSystemPositionId(updated.seSystemPositionId ?? '');
       setStatus('Aggregat uppdaterat.');
     } catch (saveError) {
       setError(`Kunde inte uppdatera aggregat: ${String(saveError)}`);
@@ -866,7 +877,7 @@ export default function HomePage() {
 
     const candidateId = normalizeSystemPositionId(systemPositionId);
     if (!candidateId) {
-      setError('Ange Systemposition för att skapa aggregat manuellt.');
+      setError('Ange AG-systemposition för att skapa aggregat manuellt.');
       return;
     }
 
@@ -897,6 +908,8 @@ export default function HomePage() {
     setStartMethod('foto');
     setIsAddModalOpen(false);
     setSystemPositionId(aggregate.systemPositionId);
+    setFlSystemPositionId(aggregate.flSystemPositionId ?? '');
+    setSeSystemPositionId(aggregate.seSystemPositionId ?? '');
     setDepartment(aggregate.department ?? '');
     setPosition(aggregate.position ?? '');
     setAggregateNotes(aggregate.notes ?? '');
@@ -1423,18 +1436,36 @@ export default function HomePage() {
                 <h2>Aggregatram</h2>
                 <span className={styles.aggregatePill}>
                   {currentAggregate
-                    ? `Aktivt ID: ${currentAggregate.systemPositionId}`
+                    ? `Aktivt AG: ${currentAggregate.systemPositionId}`
                     : 'Skapas efter objektskylt'}
                 </span>
               </div>
 
               <div className={styles.quickForm}>
                 <label>
-                  Systemposition
+                  AG-systemposition
                   <input
                     value={systemPositionId}
                     onChange={(event) => setSystemPositionId(event.target.value)}
-                    placeholder='Exempel: VP-1024'
+                    placeholder='Exempel: 459AG222'
+                  />
+                </label>
+
+                <label>
+                  FL-systemposition
+                  <input
+                    value={flSystemPositionId}
+                    onChange={(event) => setFlSystemPositionId(event.target.value)}
+                    placeholder='Exempel: 459FL222'
+                  />
+                </label>
+
+                <label>
+                  SE-systemposition
+                  <input
+                    value={seSystemPositionId}
+                    onChange={(event) => setSeSystemPositionId(event.target.value)}
+                    placeholder='Exempel: 459SE222'
                   />
                 </label>
 
@@ -1729,7 +1760,7 @@ export default function HomePage() {
             <input
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder='Sök på systemposition, komponent eller fritext'
+              placeholder='Sök på AG/FL/SE, komponent eller fritext'
             />
             <button onClick={() => void handleSearch()} disabled={isSearching}>
               {isSearching ? 'Söker...' : 'Sök'}
@@ -1773,6 +1804,11 @@ export default function HomePage() {
                 <p>
                   Avdelning: {aggregate.department || 'Ej satt'} · Position:{' '}
                   {aggregate.position || 'Ej satt'}
+                </p>
+                <p>
+                  AG: {aggregate.systemPositionId || 'Ej satt'} | FL:{' '}
+                  {aggregate.flSystemPositionId || 'Ej satt'} | SE:{' '}
+                  {aggregate.seSystemPositionId || 'Ej satt'}
                 </p>
 
                 {!!aggregate.components.length && (
