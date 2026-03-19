@@ -4,6 +4,7 @@ import {
   FilterListRow,
   FilterListSearchResult
 } from '@/lib/types';
+import { logAggregateEvents } from '@/lib/server/aggregateEventRepository';
 import { getSupabaseServerClient } from '@/lib/server/supabase';
 import { ImportedFilterListRow } from '@/lib/server/importFilterList';
 
@@ -447,6 +448,7 @@ export async function syncFilterListRowsToAggregates(
   }> = [];
 
   const touchedAggregates = new Set<string>();
+  const insertedCountByAggregate = new Map<string, number>();
   let skippedNoObjectMatch = 0;
   let skippedNoFilterData = 0;
   let skippedExistingFilter = 0;
@@ -495,6 +497,10 @@ export async function syncFilterListRowsToAggregates(
       signatures.add(signature);
       existingSignaturesByAggregate.set(match.aggregateId, signatures);
       touchedAggregates.add(match.aggregateId);
+      insertedCountByAggregate.set(
+        match.aggregateId,
+        (insertedCountByAggregate.get(match.aggregateId) ?? 0) + 1
+      );
 
       const notesParts = [`Synkad fran filterlista (rad ${row.rowNumber}, match ${match.source})`];
       if (placering) {
@@ -539,6 +545,26 @@ export async function syncFilterListRowsToAggregates(
       .in('id', Array.from(touchedAggregates));
 
     assertNoError(touchError);
+  }
+
+  if (insertedCountByAggregate.size > 0) {
+    try {
+      await logAggregateEvents(
+        Array.from(insertedCountByAggregate.entries()).map(
+          ([aggregateId, insertedCount]) => ({
+            aggregateId,
+            eventType: 'filterlist_sync_added',
+            message: `Filter synkade fran filterlista (+${insertedCount}).`,
+            metadata: {
+              insertedCount,
+              source: 'filterlista-import'
+            }
+          })
+        )
+      );
+    } catch (eventError) {
+      console.warn('Kunde inte skriva handelselogg for filterlista-synk:', eventError);
+    }
   }
 
   return {

@@ -92,6 +92,15 @@ export type AggregateComponent = {
   createdAt: string;
 };
 
+export type AggregateEvent = {
+  id: string;
+  aggregateId: string;
+  eventType: string;
+  message: string;
+  metadata: Record<string, string>;
+  createdAt: string;
+};
+
 export type AggregateRecord = {
   id: string;
   systemPositionId: string;

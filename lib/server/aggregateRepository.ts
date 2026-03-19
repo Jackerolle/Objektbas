@@ -3,6 +3,7 @@ import {
   CreateAggregateComponentPayload,
   CreateAggregatePayload
 } from '@/lib/types';
+import { logAggregateEvent } from '@/lib/server/aggregateEventRepository';
 import { ensureFilterComponentInFilterList } from '@/lib/server/filterListRepository';
 import { getSupabaseServerClient } from '@/lib/server/supabase';
 
@@ -79,6 +80,46 @@ function mapAggregate(row: AggregateRow, componentRows: ComponentRow[]): Aggrega
 function assertNoError(error: { message: string } | null) {
   if (error) {
     throw new Error(error.message);
+  }
+}
+
+function clean(value: string | undefined | null): string {
+  return value?.trim() ?? '';
+}
+
+function scopedComponentLabel(payload: CreateAggregateComponentPayload): string {
+  const componentType = payload.componentType.trim();
+  const assembly = payload.assembly?.trim();
+  const subComponent = payload.subComponent?.trim();
+
+  if (assembly && subComponent) {
+    return `${componentType} (${assembly} / ${subComponent})`;
+  }
+  if (assembly) {
+    return `${componentType} (${assembly})`;
+  }
+  if (subComponent) {
+    return `${componentType} (${subComponent})`;
+  }
+
+  return componentType;
+}
+
+async function safeLogEvent(
+  aggregateId: string,
+  eventType: string,
+  message: string,
+  metadata?: Record<string, unknown>
+) {
+  try {
+    await logAggregateEvent({
+      aggregateId,
+      eventType,
+      message,
+      metadata
+    });
+  } catch (eventError) {
+    console.warn('Kunde inte skriva handelselogg:', eventError);
   }
 }
 
@@ -321,7 +362,16 @@ export async function createAggregateRecord(
 
   assertNoError(error);
 
-  return mapAggregate(data as AggregateRow, []);
+  const created = mapAggregate(data as AggregateRow, []);
+  await safeLogEvent(created.id, 'aggregate_created', 'Aggregat skapat.', {
+    systemPositionId: created.systemPositionId,
+    flSystemPositionId: created.flSystemPositionId ?? '',
+    seSystemPositionId: created.seSystemPositionId ?? '',
+    department: created.department ?? '',
+    position: created.position ?? ''
+  });
+
+  return created;
 }
 
 export async function updateAggregateRecord(
@@ -351,6 +401,26 @@ export async function updateAggregateRecord(
   const nextNotes = hasOwn(payload, 'notes')
     ? payload.notes?.trim() || null
     : existing.notes ?? null;
+  const changedFields: string[] = [];
+
+  if (clean(existing.systemPositionId) !== clean(normalizedSystemPositionId)) {
+    changedFields.push('systemPositionId');
+  }
+  if (clean(existing.flSystemPositionId) !== clean(nextFlSystemPositionId)) {
+    changedFields.push('flSystemPositionId');
+  }
+  if (clean(existing.seSystemPositionId) !== clean(nextSeSystemPositionId)) {
+    changedFields.push('seSystemPositionId');
+  }
+  if (clean(existing.position) !== clean(nextPosition)) {
+    changedFields.push('position');
+  }
+  if (clean(existing.department) !== clean(nextDepartment)) {
+    changedFields.push('department');
+  }
+  if (clean(existing.notes) !== clean(nextNotes)) {
+    changedFields.push('notes');
+  }
 
   const { data, error } = await supabase
     .from('ventilation_aggregates')
@@ -374,7 +444,24 @@ export async function updateAggregateRecord(
   }
 
   const componentMap = await loadComponentsByAggregateIds([aggregateId]);
-  return mapAggregate(data as AggregateRow, componentMap.get(aggregateId) ?? []);
+  const updated = mapAggregate(data as AggregateRow, componentMap.get(aggregateId) ?? []);
+  await safeLogEvent(
+    aggregateId,
+    'aggregate_updated',
+    changedFields.length
+      ? `Aggregat uppdaterat (${changedFields.join(', ')}).`
+      : 'Aggregat uppdaterat.',
+    {
+      changedFields,
+      systemPositionId: updated.systemPositionId,
+      flSystemPositionId: updated.flSystemPositionId ?? '',
+      seSystemPositionId: updated.seSystemPositionId ?? '',
+      department: updated.department ?? '',
+      position: updated.position ?? ''
+    }
+  );
+
+  return updated;
 }
 
 export async function addComponentToAggregate(
@@ -388,7 +475,7 @@ export async function addComponentToAggregate(
     return null;
   }
 
-  const { error: insertError } = await supabase
+  const { data: insertedComponent, error: insertError } = await supabase
     .from('ventilation_components')
     .insert({
       aggregate_id: aggregateId,
@@ -398,7 +485,9 @@ export async function addComponentToAggregate(
       assembly: payload.assembly?.trim() || null,
       sub_component: payload.subComponent?.trim() || null,
       attributes: payload.attributes ?? {}
-    });
+    })
+    .select('id')
+    .single();
 
   assertNoError(insertError);
 
@@ -409,14 +498,29 @@ export async function addComponentToAggregate(
 
   assertNoError(updateError);
 
+  let filterListInserted = false;
   try {
-    await ensureFilterComponentInFilterList(existing, payload);
+    filterListInserted = await ensureFilterComponentInFilterList(existing, payload);
   } catch (filterListError) {
     console.warn(
       'Kunde inte uppdatera filterlista automatiskt vid ny komponent:',
       filterListError
     );
   }
+
+  await safeLogEvent(
+    aggregateId,
+    'component_added',
+    `Komponent tillagd: ${scopedComponentLabel(payload)}.`,
+    {
+      componentId: (insertedComponent as { id?: string } | null)?.id ?? '',
+      componentType: payload.componentType,
+      identifiedValue: payload.identifiedValue,
+      assembly: payload.assembly ?? '',
+      subComponent: payload.subComponent ?? '',
+      filterListInserted
+    }
+  );
 
   return getAggregateById(aggregateId);
 }
@@ -432,6 +536,8 @@ export async function updateComponentInAggregate(
   if (!existing) {
     return null;
   }
+  const previousComponent =
+    existing.components.find((component) => component.id === componentId) ?? null;
 
   const { data, error } = await supabase
     .from('ventilation_components')
@@ -461,14 +567,47 @@ export async function updateComponentInAggregate(
 
   assertNoError(updateError);
 
+  let filterListInserted = false;
   try {
-    await ensureFilterComponentInFilterList(existing, payload);
+    filterListInserted = await ensureFilterComponentInFilterList(existing, payload);
   } catch (filterListError) {
     console.warn(
       'Kunde inte uppdatera filterlista automatiskt vid komponentuppdatering:',
       filterListError
     );
   }
+
+  const changedFields: string[] = [];
+  if (clean(previousComponent?.componentType) !== clean(payload.componentType)) {
+    changedFields.push('componentType');
+  }
+  if (clean(previousComponent?.identifiedValue) !== clean(payload.identifiedValue)) {
+    changedFields.push('identifiedValue');
+  }
+  if (clean(previousComponent?.assembly) !== clean(payload.assembly)) {
+    changedFields.push('assembly');
+  }
+  if (clean(previousComponent?.subComponent) !== clean(payload.subComponent)) {
+    changedFields.push('subComponent');
+  }
+  if (clean(previousComponent?.notes) !== clean(payload.notes)) {
+    changedFields.push('notes');
+  }
+
+  await safeLogEvent(
+    aggregateId,
+    'component_updated',
+    `Komponent uppdaterad: ${scopedComponentLabel(payload)}.`,
+    {
+      componentId,
+      componentType: payload.componentType,
+      identifiedValue: payload.identifiedValue,
+      assembly: payload.assembly ?? '',
+      subComponent: payload.subComponent ?? '',
+      changedFields,
+      filterListInserted
+    }
+  );
 
   return getAggregateById(aggregateId);
 }
@@ -483,6 +622,8 @@ export async function deleteComponentFromAggregate(
   if (!existing) {
     return null;
   }
+  const targetComponent =
+    existing.components.find((component) => component.id === componentId) ?? null;
 
   const { data, error } = await supabase
     .from('ventilation_components')
@@ -504,6 +645,21 @@ export async function deleteComponentFromAggregate(
     .eq('id', aggregateId);
 
   assertNoError(updateError);
+
+  await safeLogEvent(
+    aggregateId,
+    'component_deleted',
+    targetComponent
+      ? `Komponent borttagen: ${targetComponent.componentType}.`
+      : 'Komponent borttagen.',
+    {
+      componentId,
+      componentType: targetComponent?.componentType ?? '',
+      identifiedValue: targetComponent?.identifiedValue ?? '',
+      assembly: targetComponent?.assembly ?? '',
+      subComponent: targetComponent?.subComponent ?? ''
+    }
+  );
 
   return getAggregateById(aggregateId);
 }

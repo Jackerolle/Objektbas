@@ -9,6 +9,7 @@ import {
   createAggregate,
   deleteAggregate,
   deleteAggregateComponent,
+  getAggregateEvents,
   importFilterListFile,
   searchAggregates,
   searchFilterList,
@@ -27,6 +28,7 @@ import {
   saveAggregateLocalPhoto
 } from '@/lib/localPhotoStore';
 import {
+  AggregateEvent,
   AggregateRecord,
   AppMode,
   ComponentType,
@@ -133,6 +135,32 @@ const REQUIRED_TASK_IDS = CAPTURE_TASKS.filter((task) => task.required).map(
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
+
+function formatDateTimeSv(value: string | undefined): string {
+  if (!value) {
+    return '-';
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString('sv-SE');
+}
+
+function formatEventMetadata(metadata: Record<string, string>): string {
+  const entries = Object.entries(metadata).filter(([, value]) => value?.trim());
+  if (!entries.length) {
+    return '';
+  }
+
+  return entries
+    .slice(0, 6)
+    .map(([key, value]) => `${formatAttributeLabel(key)}: ${value}`)
+    .join(' | ');
+}
+
 function findTask(taskId: string): CaptureTask {
   return CAPTURE_TASKS.find((task) => task.id === taskId) ?? CAPTURE_TASKS[0];
 }
@@ -492,6 +520,15 @@ export default function HomePage() {
   const [expandedLibraryAggregateId, setExpandedLibraryAggregateId] = useState<string | null>(
     null
   );
+  const [aggregateEventsById, setAggregateEventsById] = useState<
+    Record<string, AggregateEvent[]>
+  >({});
+  const [aggregateEventErrorById, setAggregateEventErrorById] = useState<
+    Record<string, string>
+  >({});
+  const [loadingAggregateEventsId, setLoadingAggregateEventsId] = useState<string | null>(
+    null
+  );
   const [filterRows, setFilterRows] = useState<FilterListRow[]>([]);
   const [filterColumns, setFilterColumns] = useState<string[]>([]);
   const [filterQuery, setFilterQuery] = useState('');
@@ -755,6 +792,47 @@ export default function HomePage() {
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const loadAggregateEvents = async (aggregateId: string, force = false) => {
+    if (!force && aggregateEventsById[aggregateId]) {
+      return;
+    }
+
+    setLoadingAggregateEventsId(aggregateId);
+    setAggregateEventErrorById((current) => {
+      const next = { ...current };
+      delete next[aggregateId];
+      return next;
+    });
+
+    try {
+      const events = await getAggregateEvents(aggregateId, 120);
+      setAggregateEventsById((current) => ({
+        ...current,
+        [aggregateId]: events
+      }));
+    } catch (eventsError) {
+      const message = `Kunde inte hamta handelser: ${String(eventsError)}`;
+      setAggregateEventErrorById((current) => ({
+        ...current,
+        [aggregateId]: message
+      }));
+    } finally {
+      setLoadingAggregateEventsId((current) =>
+        current === aggregateId ? null : current
+      );
+    }
+  };
+
+  const handleToggleLibraryAggregate = (aggregateId: string) => {
+    if (expandedLibraryAggregateId === aggregateId) {
+      setExpandedLibraryAggregateId(null);
+      return;
+    }
+
+    setExpandedLibraryAggregateId(aggregateId);
+    void loadAggregateEvents(aggregateId);
   };
 
   const handleLoadFilterList = async (queryOverride?: string) => {
@@ -1442,6 +1520,16 @@ export default function HomePage() {
     try {
       await deleteAggregate(aggregate.id);
       setSearchResults((current) => current.filter((item) => item.id !== aggregate.id));
+      setAggregateEventsById((current) => {
+        const next = { ...current };
+        delete next[aggregate.id];
+        return next;
+      });
+      setAggregateEventErrorById((current) => {
+        const next = { ...current };
+        delete next[aggregate.id];
+        return next;
+      });
 
       if (currentAggregate?.id === aggregate.id) {
         resetAggregateDraft();
@@ -2199,11 +2287,7 @@ export default function HomePage() {
                 <li key={aggregate.id}>
                   <button
                     className={styles.libraryAggregateRow}
-                    onClick={() =>
-                      setExpandedLibraryAggregateId((current) =>
-                        current === aggregate.id ? null : aggregate.id
-                      )
-                    }
+                    onClick={() => handleToggleLibraryAggregate(aggregate.id)}
                   >
                     <span>
                       <strong>AG:</strong> {aggregate.systemPositionId || 'Ej satt'}
@@ -2300,6 +2384,54 @@ export default function HomePage() {
                         <p className={styles.emptyState}>Inga komponenter sparade i detta aggregat.</p>
                       )}
 
+                      <div className={styles.eventLogSection}>
+                        <div className={styles.eventLogHeader}>
+                          <p className={styles.componentOverviewTitle}>Handelselogg</p>
+                          <button
+                            className={styles.inlineButton}
+                            onClick={() => void loadAggregateEvents(aggregate.id, true)}
+                            disabled={loadingAggregateEventsId === aggregate.id}
+                          >
+                            {loadingAggregateEventsId === aggregate.id ? 'Laddar...' : 'Uppdatera'}
+                          </button>
+                        </div>
+
+                        {!!aggregateEventErrorById[aggregate.id] && (
+                          <p className={styles.emptyState}>{aggregateEventErrorById[aggregate.id]}</p>
+                        )}
+
+                        {loadingAggregateEventsId === aggregate.id &&
+                          !(aggregateEventsById[aggregate.id]?.length ?? 0) && (
+                            <p className={styles.emptyState}>Laddar handelser...</p>
+                          )}
+
+                        {!!(aggregateEventsById[aggregate.id]?.length ?? 0) && (
+                          <ul className={styles.eventLogList}>
+                            {aggregateEventsById[aggregate.id].map((event) => {
+                              const metadataText = formatEventMetadata(event.metadata);
+
+                              return (
+                                <li key={event.id}>
+                                  <span className={styles.eventLogTime}>
+                                    {formatDateTimeSv(event.createdAt)}
+                                  </span>
+                                  <span>{event.message}</span>
+                                  {!!metadataText && (
+                                    <span className={styles.eventLogMeta}>{metadataText}</span>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+
+                        {loadingAggregateEventsId !== aggregate.id &&
+                          !(aggregateEventsById[aggregate.id]?.length ?? 0) &&
+                          !aggregateEventErrorById[aggregate.id] && (
+                            <p className={styles.emptyState}>Inga handelser loggade annu.</p>
+                          )}
+                      </div>
+
                       <div className={styles.resultActions}>
                         <button
                           className={styles.openButton}
@@ -2395,6 +2527,8 @@ export default function HomePage() {
                 <thead>
                   <tr>
                     <th>Rad</th>
+                    <th>Kalla</th>
+                    <th>Skapad</th>
                     {filterColumns.map((column) => (
                       <th key={`filter-col-${column}`}>{column}</th>
                     ))}
@@ -2404,6 +2538,8 @@ export default function HomePage() {
                   {filterRows.map((row) => (
                     <tr key={row.id}>
                       <td>{row.rowNumber}</td>
+                      <td>{row.sourceFileName || '-'}</td>
+                      <td>{formatDateTimeSv(row.createdAt)}</td>
                       {filterColumns.map((column) => (
                         <td key={`${row.id}-${column}`}>{row.data[column] || '—'}</td>
                       ))}
