@@ -354,20 +354,25 @@ export function CameraCapture({
           <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>{subtitle}</p>
           <strong>{title}</strong>
         </div>
+        <button
+          onClick={handlePickGallery}
+          disabled={actionsDisabled}
+          style={{
+            minHeight: '2.15rem',
+            padding: '0.45rem 0.75rem',
+            borderRadius: '999px',
+            border: '1px solid rgba(148,163,184,0.45)',
+            background: 'rgba(15,23,42,0.65)',
+            color: '#e2e8f0',
+            cursor: actionsDisabled ? 'not-allowed' : 'pointer',
+            opacity: actionsDisabled ? 0.55 : 1,
+            fontWeight: 600,
+            fontSize: '0.82rem'
+          }}
+        >
+          {isUploading ? 'Laser fil...' : uploadLabel}
+        </button>
       </header>
-
-      <div
-        style={{
-          borderRadius: '0.75rem',
-          textAlign: 'center',
-          padding: '1rem',
-          color: '#cbd5f5',
-          background: '#020617',
-          border: '1px solid rgba(148, 163, 184, 0.2)'
-        }}
-      >
-        Välj hur du vill lägga till bild för momentet.
-      </div>
 
       {error && (
         <p style={{ margin: '0.75rem 0 0', color: '#fda4af', fontSize: '0.82rem' }}>{error}</p>
@@ -379,21 +384,21 @@ export function CameraCapture({
         </p>
       )}
 
-      {isSubmitting && (
+      {(isSubmitting || isUploading) && (
         <p style={{ margin: '0.45rem 0 0', color: '#67e8f9', fontSize: '0.82rem' }}>
-          Bearbetar bild med lokal OCR...
+          {isUploading ? 'Laser in bild...' : 'Bearbetar bild med OCR/AI...'}
         </p>
       )}
 
-      {!!lastCaptureInfo && !isSubmitting && (
+      {!!lastCaptureInfo && !isSubmitting && !isUploading && (
         <p style={{ margin: '0.45rem 0 0', color: '#86efac', fontSize: '0.82rem' }}>
           {lastCaptureInfo}
         </p>
       )}
 
-      {isMobileDevice && (
+      {isMobileDevice && !error && !isSubmitting && !isUploading && (
         <p style={{ margin: '0.45rem 0 0', color: '#cbd5e1', fontSize: '0.8rem' }}>
-          Tips: Om kameran inte öppnas direkt, använd "Ladda upp foto" och välj "Ta bild".
+          Om kameran inte oppnas direkt, anvand "Ladda upp foto" och valj "Ta bild".
         </p>
       )}
 
@@ -431,7 +436,7 @@ export function CameraCapture({
           onClick={handlePickDeviceCamera}
           disabled={actionsDisabled}
           style={{
-            flex: isMobileDevice ? '1 1 100%' : 1,
+            flex: 1,
             minHeight: '2.9rem',
             padding: '0.85rem',
             borderRadius: '999px',
@@ -445,24 +450,6 @@ export function CameraCapture({
           }}
         >
           {captureLabel}
-        </button>
-
-        <button
-          onClick={handlePickGallery}
-          disabled={actionsDisabled}
-          style={{
-            flex: isMobileDevice ? '1 1 100%' : undefined,
-            minHeight: '2.9rem',
-            padding: '0.85rem 1rem',
-            borderRadius: '999px',
-            border: '1px solid rgba(148,163,184,0.45)',
-            background: 'rgba(15,23,42,0.65)',
-            color: '#e2e8f0',
-            cursor: actionsDisabled ? 'not-allowed' : 'pointer',
-            opacity: actionsDisabled ? 0.55 : 1
-          }}
-        >
-          {isUploading ? 'Läser fil...' : uploadLabel}
         </button>
       </div>
     </section>
