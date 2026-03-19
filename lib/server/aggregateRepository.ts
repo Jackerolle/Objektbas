@@ -3,6 +3,7 @@ import {
   CreateAggregateComponentPayload,
   CreateAggregatePayload
 } from '@/lib/types';
+import { ensureFilterComponentInFilterList } from '@/lib/server/filterListRepository';
 import { getSupabaseServerClient } from '@/lib/server/supabase';
 
 type AggregateRow = {
@@ -408,6 +409,15 @@ export async function addComponentToAggregate(
 
   assertNoError(updateError);
 
+  try {
+    await ensureFilterComponentInFilterList(existing, payload);
+  } catch (filterListError) {
+    console.warn(
+      'Kunde inte uppdatera filterlista automatiskt vid ny komponent:',
+      filterListError
+    );
+  }
+
   return getAggregateById(aggregateId);
 }
 
@@ -450,6 +460,15 @@ export async function updateComponentInAggregate(
     .eq('id', aggregateId);
 
   assertNoError(updateError);
+
+  try {
+    await ensureFilterComponentInFilterList(existing, payload);
+  } catch (filterListError) {
+    console.warn(
+      'Kunde inte uppdatera filterlista automatiskt vid komponentuppdatering:',
+      filterListError
+    );
+  }
 
   return getAggregateById(aggregateId);
 }

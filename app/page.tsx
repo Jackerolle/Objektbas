@@ -9,7 +9,9 @@ import {
   createAggregate,
   deleteAggregate,
   deleteAggregateComponent,
+  importFilterListFile,
   searchAggregates,
+  searchFilterList,
   updateAggregateComponent,
   updateAggregate
 } from '@/lib/api';
@@ -28,6 +30,7 @@ import {
   AggregateRecord,
   AppMode,
   ComponentType,
+  FilterListRow,
   SystemPositionAnalysis
 } from '@/lib/types';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -489,6 +492,14 @@ export default function HomePage() {
   const [expandedLibraryAggregateId, setExpandedLibraryAggregateId] = useState<string | null>(
     null
   );
+  const [filterRows, setFilterRows] = useState<FilterListRow[]>([]);
+  const [filterColumns, setFilterColumns] = useState<string[]>([]);
+  const [filterQuery, setFilterQuery] = useState('');
+  const [filterFile, setFilterFile] = useState<File | null>(null);
+  const [totalFilterRows, setTotalFilterRows] = useState(0);
+  const [filteredFilterRows, setFilteredFilterRows] = useState(0);
+  const [isLoadingFilterList, setIsLoadingFilterList] = useState(false);
+  const [isImportingFilterList, setIsImportingFilterList] = useState(false);
 
   const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -745,6 +756,66 @@ export default function HomePage() {
       setIsSearching(false);
     }
   };
+
+  const handleLoadFilterList = async (queryOverride?: string) => {
+    clearFeedback();
+    setIsLoadingFilterList(true);
+
+    try {
+      const query = queryOverride ?? filterQuery;
+      const result = await searchFilterList(query, 2000);
+      setFilterRows(result.rows);
+      setFilterColumns(result.columns);
+      setTotalFilterRows(result.totalRows);
+      setFilteredFilterRows(result.filteredRows);
+      setStatus(
+        query.trim()
+          ? `${result.filteredRows} filterrader matchar "${query.trim()}".`
+          : `${result.totalRows} filterrader laddade.`
+      );
+    } catch (filterError) {
+      setError(`Kunde inte hamta filterlista: ${String(filterError)}`);
+    } finally {
+      setIsLoadingFilterList(false);
+    }
+  };
+
+  const handleImportFilterList = async () => {
+    clearFeedback();
+
+    if (!filterFile) {
+      setError('Valj en Excel-fil for filterlistan.');
+      return;
+    }
+
+    setIsImportingFilterList(true);
+
+    try {
+      const result = await importFilterListFile(filterFile);
+      setFilterFile(null);
+      setFilterQuery('');
+      setStatus(
+        `Filterlista importerad (${result.importedRows}/${result.totalRows} rader).`
+      );
+      await handleLoadFilterList('');
+    } catch (importError) {
+      setError(`Kunde inte importera filterlista: ${String(importError)}`);
+    } finally {
+      setIsImportingFilterList(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mode !== 'filterlista') {
+      return;
+    }
+
+    if (filterRows.length || isLoadingFilterList) {
+      return;
+    }
+
+    void handleLoadFilterList(filterQuery);
+  }, [filterQuery, filterRows.length, isLoadingFilterList, mode]);
 
   const handleCapture = async (imageDataUrl: string) => {
     clearFeedback();
@@ -1430,6 +1501,17 @@ export default function HomePage() {
           >
             Bibliotek
           </button>
+          <button
+            onClick={() => {
+              setMode('filterlista');
+              void handleLoadFilterList(filterQuery);
+            }}
+            className={`${styles.modeButton} ${
+              mode === 'filterlista' ? styles.modeButtonActive : ''
+            }`}
+          >
+            Filterlista
+          </button>
         </div>
         <div className={styles.installPromptRow}>
           <PwaInstallPrompt />
@@ -2092,7 +2174,7 @@ export default function HomePage() {
             </section>
           </section>
         )
-      ) : (
+      ) : mode === 'sok' ? (
         <section className={styles.searchCard}>
           <div className={styles.libraryToolbar}>
             <label>
@@ -2252,6 +2334,92 @@ export default function HomePage() {
           {!!departmentFilter && !isSearching && filteredSearchResults.length === 0 && (
             <p className={styles.emptyState}>
               Inga aggregat hittades för vald avdelning.
+            </p>
+          )}
+        </section>
+      ) : (
+        <section className={styles.searchCard}>
+          <div className={styles.filterUploadCard}>
+            <div className={styles.cardHeader}>
+              <h2>Filterlista</h2>
+              <span className={styles.badge}>
+                {filteredFilterRows}/{totalFilterRows} rader
+              </span>
+            </div>
+
+            <p className={styles.heroText}>
+              Ladda upp Excel-fil med filterlistan. Ny import ersatter tidigare lista och blir
+              direkt sokbar.
+            </p>
+
+            <div className={styles.filterUploadRow}>
+              <input
+                type='file'
+                accept='.xlsx,.xls,.csv'
+                onChange={(event) => setFilterFile(event.target.files?.[0] ?? null)}
+              />
+              <button
+                className={styles.manualSaveButton}
+                onClick={() => void handleImportFilterList()}
+                disabled={!filterFile || isImportingFilterList}
+              >
+                {isImportingFilterList ? 'Importerar...' : 'Importera filterlista'}
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.searchControls}>
+            <input
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+              placeholder='Sok pa filtertyp, artikel, position, aggregat, notering...'
+            />
+            <button
+              onClick={() => void handleLoadFilterList(filterQuery)}
+              disabled={isLoadingFilterList}
+            >
+              {isLoadingFilterList ? 'Soker...' : 'Sok'}
+            </button>
+            <button
+              className={styles.inlineButton}
+              onClick={() => {
+                setFilterQuery('');
+                void handleLoadFilterList('');
+              }}
+              disabled={isLoadingFilterList}
+            >
+              Rensa
+            </button>
+          </div>
+
+          {!!filterRows.length && !!filterColumns.length && (
+            <div className={styles.filterTableWrap}>
+              <table className={styles.filterTable}>
+                <thead>
+                  <tr>
+                    <th>Rad</th>
+                    {filterColumns.map((column) => (
+                      <th key={`filter-col-${column}`}>{column}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filterRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.rowNumber}</td>
+                      {filterColumns.map((column) => (
+                        <td key={`${row.id}-${column}`}>{row.data[column] || '—'}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!isLoadingFilterList && !filterRows.length && (
+            <p className={styles.emptyState}>
+              Ingen filterdata visad annu. Importera en fil eller prova ett annat sokord.
             </p>
           )}
         </section>

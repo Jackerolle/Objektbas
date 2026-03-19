@@ -28,7 +28,7 @@ export type ObservationPayload = {
 
 export type SyncState = 'idle' | 'syncing' | 'offline';
 
-export type AppMode = 'lagg-till' | 'sok' | 'importera';
+export type AppMode = 'lagg-till' | 'sok' | 'filterlista' | 'importera';
 
 export type ComponentType =
   | 'Motor'
@@ -138,4 +138,28 @@ export type ImportPreviewResult = {
   parsedComponents: number;
   warnings: string[];
   previewAggregates: ImportPreviewAggregate[];
+};
+
+export type FilterListRow = {
+  id: string;
+  rowNumber: number;
+  sourceFileName?: string;
+  data: Record<string, string>;
+  createdAt: string;
+};
+
+export type FilterListSearchResult = {
+  totalRows: number;
+  filteredRows: number;
+  columns: string[];
+  rows: FilterListRow[];
+};
+
+export type ImportFilterListResult = {
+  sourceFileName?: string;
+  totalRows: number;
+  skippedRows: number;
+  importedRows: number;
+  columns: string[];
+  warnings: string[];
 };

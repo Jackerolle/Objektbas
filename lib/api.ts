@@ -4,7 +4,9 @@ import {
   ComponentAnalysis,
   CreateAggregateComponentPayload,
   CreateAggregatePayload,
+  FilterListSearchResult,
   ImportAggregatesResult,
+  ImportFilterListResult,
   ImportPreviewResult,
   ObservationPayload,
   Objekt,
@@ -253,4 +255,43 @@ export async function importAggregatesFile(
   }
 
   return (await response.json()) as ImportAggregatesResult;
+}
+
+export async function searchFilterList(
+  query: string,
+  limit = 1000
+): Promise<FilterListSearchResult> {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', String(limit));
+
+  const response = await fetch(toApiUrl(`/api/filterlist?${params.toString()}`), {
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as FilterListSearchResult;
+}
+
+export async function importFilterListFile(
+  file: File
+): Promise<ImportFilterListResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(toApiUrl('/api/filterlist/import'), {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as ImportFilterListResult;
 }
