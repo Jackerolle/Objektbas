@@ -28,6 +28,31 @@ const SYSTEM_ID_BLACKLIST = new Set([
   'NA'
 ]);
 
+const OCR_LETTER_TO_DIGIT: Record<string, string> = {
+  O: '0',
+  Q: '0',
+  D: '0',
+  I: '1',
+  L: '1',
+  Z: '2',
+  A: '4',
+  S: '5',
+  G: '6',
+  T: '7',
+  B: '8'
+};
+
+const OCR_DIGIT_TO_LETTER: Record<string, string> = {
+  '0': 'O',
+  '1': 'I',
+  '2': 'Z',
+  '4': 'A',
+  '5': 'S',
+  '6': 'G',
+  '7': 'T',
+  '8': 'B'
+};
+
 let workerPromise: Promise<LocalWorker> | null = null;
 
 function sanitizeSystemId(value: string | undefined): string {
@@ -89,6 +114,78 @@ function scoreSystemIdCandidate(value: string): number {
   return score;
 }
 
+function normalizeToDigits(segment: string): string | null {
+  let output = '';
+  for (const char of segment) {
+    if (/[0-9]/.test(char)) {
+      output += char;
+      continue;
+    }
+
+    const mapped = OCR_LETTER_TO_DIGIT[char];
+    if (!mapped) {
+      return null;
+    }
+
+    output += mapped;
+  }
+
+  return output;
+}
+
+function normalizeToLetters(segment: string): string | null {
+  let output = '';
+  for (const char of segment) {
+    if (/[A-Z]/.test(char)) {
+      output += char;
+      continue;
+    }
+
+    const mapped = OCR_DIGIT_TO_LETTER[char];
+    if (!mapped) {
+      return null;
+    }
+
+    output += mapped;
+  }
+
+  return output;
+}
+
+function buildPatternCorrectedCandidates(rawCandidate: string): string[] {
+  const candidate = sanitizeSystemId(rawCandidate);
+  if (!candidate || candidate.length < 5 || candidate.length > 14) {
+    return candidate ? [candidate] : [];
+  }
+
+  const results = new Set<string>([candidate]);
+
+  for (let prefixLen = 2; prefixLen <= 6; prefixLen += 1) {
+    for (let middleLen = 1; middleLen <= 4; middleLen += 1) {
+      const suffixLen = candidate.length - prefixLen - middleLen;
+      if (suffixLen < 2 || suffixLen > 8) {
+        continue;
+      }
+
+      const prefix = candidate.slice(0, prefixLen);
+      const middle = candidate.slice(prefixLen, prefixLen + middleLen);
+      const suffix = candidate.slice(prefixLen + middleLen);
+
+      const normalizedPrefix = normalizeToDigits(prefix);
+      const normalizedMiddle = normalizeToLetters(middle);
+      const normalizedSuffix = normalizeToDigits(suffix);
+
+      if (!normalizedPrefix || !normalizedMiddle || !normalizedSuffix) {
+        continue;
+      }
+
+      results.add(`${normalizedPrefix}${normalizedMiddle}${normalizedSuffix}`);
+    }
+  }
+
+  return Array.from(results);
+}
+
 function extractSystemIdFromText(rawText: string): string {
   const lines = rawText
     .toUpperCase()
@@ -100,20 +197,21 @@ function extractSystemIdFromText(rawText: string): string {
   let bestScore = -1;
 
   const evaluate = (candidate: string, bonus = 0) => {
-    const normalized = sanitizeSystemId(candidate);
-    if (!normalized) {
-      return;
-    }
+    for (const normalized of buildPatternCorrectedCandidates(candidate)) {
+      const score = scoreSystemIdCandidate(normalized);
+      if (score < 0) {
+        continue;
+      }
 
-    const score = scoreSystemIdCandidate(normalized);
-    if (score < 0) {
-      return;
-    }
-
-    const finalScore = score + bonus;
-    if (finalScore > bestScore || (finalScore === bestScore && normalized.length > best.length)) {
-      bestScore = finalScore;
-      best = normalized;
+      const correctionBonus = normalized === sanitizeSystemId(candidate) ? 0 : 4;
+      const finalScore = score + bonus + correctionBonus;
+      if (
+        finalScore > bestScore ||
+        (finalScore === bestScore && normalized.length > best.length)
+      ) {
+        bestScore = finalScore;
+        best = normalized;
+      }
     }
   };
 
