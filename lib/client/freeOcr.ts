@@ -63,7 +63,7 @@ function isLikelySystemId(value: string): boolean {
   }
 
   if (
-    /(GEMINI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|GOOGLE|GENERATIVELANGUAGE|API)/.test(
+    /(OPENAI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|API)/.test(
       normalized
     )
   ) {

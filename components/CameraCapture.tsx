@@ -148,7 +148,7 @@ function toUserErrorMessage(error: unknown): string {
     return 'Kunde inte hantera bilden. Prova igen med ett nytt foto.';
   }
 
-  if (/gemini-fel \\(429\\)|resource_exhausted|quota exceeded/i.test(message)) {
+  if (/openai-fel \\(429\\)|resource_exhausted|quota exceeded/i.test(message)) {
     return 'OCR/AI-kvot tillfalligt slut. Vanta en stund eller komplettera manuellt.';
   }
 
