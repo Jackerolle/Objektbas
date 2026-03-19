@@ -40,7 +40,6 @@ type CaptureTask = {
   required?: boolean;
 };
 
-type SortOrder = 'nyast' | 'aldst';
 type StartMethod = 'foto' | 'manuell';
 
 const ASSEMBLY_OPTIONS = ['Aggregat', 'Motor', 'Fl\u00e4kt', '\u00d6vrigt'] as const;
@@ -54,12 +53,16 @@ const SUB_COMPONENT_PRESETS: Record<AssemblyOption, string[]> = {
 };
 
 const DEPARTMENT_PRESETS = [
-  'Produktion',
-  'Underhåll',
-  'Energi',
-  'Logistik',
-  'Verkstad',
-  'Kvalitet'
+  '\u00c5C2',
+  'Biorening 1',
+  'Biorening 2',
+  'IMM',
+  'Kokeri',
+  'PM 1',
+  'PM 2',
+  'Renseri',
+  'RF 3',
+  'Silstation/Degern\u00e4s'
 ];
 
 const CAPTURE_TASKS: CaptureTask[] = [
@@ -114,7 +117,6 @@ const REQUIRED_TASK_IDS = CAPTURE_TASKS.filter((task) => task.required).map(
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
-
 function findTask(taskId: string): CaptureTask {
   return CAPTURE_TASKS.find((task) => task.id === taskId) ?? CAPTURE_TASKS[0];
 }
@@ -451,10 +453,11 @@ export default function HomePage() {
   const [deletingComponentId, setDeletingComponentId] = useState<string | null>(null);
   const [deletingAggregateId, setDeletingAggregateId] = useState<string | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AggregateRecord[]>([]);
-  const [departmentFilter, setDepartmentFilter] = useState('alla');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('nyast');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [expandedLibraryAggregateId, setExpandedLibraryAggregateId] = useState<string | null>(
+    null
+  );
 
   const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -482,26 +485,22 @@ export default function HomePage() {
     });
   }, [capturedPhotos, currentAggregate, aggregateReady]);
 
-  const departmentOptions = useMemo(() => {
-    const values = searchResults
-      .map((record) => record.department?.trim())
-      .filter((value): value is string => Boolean(value));
-
-    return ['alla', ...Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, 'sv-SE'))];
-  }, [searchResults]);
-
   const filteredSearchResults = useMemo(() => {
-    const scoped =
-      departmentFilter === 'alla'
-        ? searchResults
-        : searchResults.filter((item) => (item.department ?? '') === departmentFilter);
+    const departmentToken = departmentFilter.trim().toLowerCase();
+    if (!departmentToken) {
+      return [];
+    }
 
-    return [...scoped].sort((a, b) => {
+    const scoped = searchResults.filter(
+      (item) => (item.department ?? '').trim().toLowerCase() === departmentToken
+    );
+
+    return scoped.sort((a, b) => {
       const aTime = new Date(a.updatedAt).getTime();
       const bTime = new Date(b.updatedAt).getTime();
-      return sortOrder === 'nyast' ? bTime - aTime : aTime - bTime;
+      return bTime - aTime;
     });
-  }, [departmentFilter, searchResults, sortOrder]);
+  }, [departmentFilter, searchResults]);
 
   const captureSubComponentSuggestions = useMemo(
     () => SUB_COMPONENT_PRESETS[captureAssembly] ?? [],
@@ -674,7 +673,7 @@ export default function HomePage() {
     setIsSearching(true);
 
     try {
-      const query = queryOverride ?? searchQuery;
+      const query = queryOverride ?? '';
       const results = await searchAggregates(query);
       setSearchResults(results);
       setStatus(`${results.length} träffar i biblioteket.`);
@@ -1194,6 +1193,9 @@ export default function HomePage() {
         resetAggregateDraft();
         setStartMethod(null);
         setMode('sok');
+        setDepartmentFilter('');
+        setExpandedLibraryAggregateId(null);
+        void handleSearch('');
       }
 
       setStatus(`Aggregat ${aggregate.systemPositionId} borttaget.`);
@@ -1232,6 +1234,8 @@ export default function HomePage() {
           <button
             onClick={() => {
               setMode('sok');
+              setDepartmentFilter('');
+              setExpandedLibraryAggregateId(null);
               void handleSearch('');
             }}
             className={`${styles.modeButton} ${
@@ -1738,103 +1742,114 @@ export default function HomePage() {
         )
       ) : (
         <section className={styles.searchCard}>
-          <div className={styles.searchControls}>
-            <input
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder='Sök på AG/FL/SE, komponent eller fritext'
-            />
-            <button onClick={() => void handleSearch()} disabled={isSearching}>
-              {isSearching ? 'Söker...' : 'Sök'}
-            </button>
-          </div>
-
           <div className={styles.libraryToolbar}>
             <label>
               Avdelning
               <select
                 value={departmentFilter}
-                onChange={(event) => setDepartmentFilter(event.target.value)}
+                onChange={(event) => {
+                  setDepartmentFilter(event.target.value);
+                  setExpandedLibraryAggregateId(null);
+                }}
               >
-                {departmentOptions.map((option) => (
+                <option value=''>Välj avdelning</option>
+                {DEPARTMENT_PRESETS.map((option) => (
                   <option key={option} value={option}>
-                    {option === 'alla' ? 'Alla avdelningar' : option}
+                    {option}
                   </option>
                 ))}
               </select>
             </label>
-
-            <label>
-              Sortering
-              <select
-                value={sortOrder}
-                onChange={(event) => setSortOrder(event.target.value as SortOrder)}
-              >
-                <option value='nyast'>Senast uppdaterad</option>
-                <option value='aldst'>{'\u00c4ldst f\u00f6rst'}</option>
-              </select>
-            </label>
           </div>
 
-          <ul className={styles.searchResultList}>
-            {filteredSearchResults.map((aggregate) => (
-              <li key={aggregate.id}>
-                <header>
-                  <strong>{aggregate.systemPositionId}</strong>
-                  <span>{new Date(aggregate.updatedAt).toLocaleString('sv-SE')}</span>
-                </header>
-                <p>
-                  Avdelning: {aggregate.department || 'Ej satt'} · Position:{' '}
-                  {aggregate.position || 'Ej satt'}
-                </p>
-                <p>
-                  AG: {aggregate.systemPositionId || 'Ej satt'} | FL:{' '}
-                  {aggregate.flSystemPositionId || 'Ej satt'} | SE:{' '}
-                  {aggregate.seSystemPositionId || 'Ej satt'}
-                </p>
-
-                {!!aggregate.components.length && (
-                  <div className={styles.componentOverview}>
-                    <p className={styles.componentOverviewTitle}>
-                      Komponentöversikt ({aggregate.components.length})
-                    </p>
-                    <ul className={styles.componentOverviewList}>
-                      {aggregate.components.map((component) => (
-                        <li key={component.id}>
-                          <strong>{component.componentType}</strong>
-                          <span>
-                            {component.assembly ? `${component.assembly}` : 'Ingen huvudkategori'}
-                            {component.subComponent ? ` / ${component.subComponent}` : ''}
-                          </span>
-                          <span>{component.identifiedValue}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                <div className={styles.resultActions}>
+          {!!departmentFilter && (
+            <ul className={styles.searchResultList}>
+              {filteredSearchResults.map((aggregate) => (
+                <li key={aggregate.id}>
                   <button
-                    className={styles.openButton}
-                    onClick={() => handleOpenAggregateForEditing(aggregate)}
+                    className={styles.libraryAggregateRow}
+                    onClick={() =>
+                      setExpandedLibraryAggregateId((current) =>
+                        current === aggregate.id ? null : aggregate.id
+                      )
+                    }
                   >
-                    {'\u00d6ppna f\u00f6r redigering'}
+                    <span>
+                      <strong>AG:</strong> {aggregate.systemPositionId || 'Ej satt'}
+                    </span>
+                    <span>
+                      <strong>FL:</strong> {aggregate.flSystemPositionId || 'Ej satt'}
+                    </span>
+                    <span>
+                      <strong>SE:</strong> {aggregate.seSystemPositionId || 'Ej satt'}
+                    </span>
+                    <span>
+                      <strong>Position:</strong> {aggregate.position || 'Ej satt'}
+                    </span>
                   </button>
-                  <button
-                    className={styles.deleteButton}
-                    onClick={() => void handleDeleteAggregate(aggregate)}
-                    disabled={deletingAggregateId === aggregate.id}
-                  >
-                    {deletingAggregateId === aggregate.id ? 'Tar bort...' : 'Ta bort aggregat'}
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
 
-          {!isSearching && filteredSearchResults.length === 0 && (
+                  {expandedLibraryAggregateId === aggregate.id && (
+                    <div className={styles.libraryAggregateDetails}>
+                      <p>
+                        Senast uppdaterad:{' '}
+                        {new Date(aggregate.updatedAt).toLocaleString('sv-SE')}
+                      </p>
+
+                      {!!aggregate.components.length && (
+                        <div className={styles.componentOverview}>
+                          <p className={styles.componentOverviewTitle}>
+                            Komponentöversikt ({aggregate.components.length})
+                          </p>
+                          <ul className={styles.componentOverviewList}>
+                            {aggregate.components.map((component) => (
+                              <li key={component.id}>
+                                <strong>{component.componentType}</strong>
+                                <span>
+                                  {component.assembly ? `${component.assembly}` : 'Ingen huvudkategori'}
+                                  {component.subComponent ? ` / ${component.subComponent}` : ''}
+                                </span>
+                                <span>{component.identifiedValue}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {!aggregate.components.length && (
+                        <p className={styles.emptyState}>Inga komponenter sparade i detta aggregat.</p>
+                      )}
+
+                      <div className={styles.resultActions}>
+                        <button
+                          className={styles.openButton}
+                          onClick={() => handleOpenAggregateForEditing(aggregate)}
+                        >
+                          {'\u00d6ppna f\u00f6r redigering'}
+                        </button>
+                        <button
+                          className={styles.deleteButton}
+                          onClick={() => void handleDeleteAggregate(aggregate)}
+                          disabled={deletingAggregateId === aggregate.id}
+                        >
+                          {deletingAggregateId === aggregate.id ? 'Tar bort...' : 'Ta bort aggregat'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {!departmentFilter && !isSearching && (
             <p className={styles.emptyState}>
-              Inga träffar ännu. Registrera objekt via fotoflödet så byggs biblioteket upp.
+              Välj avdelning i listan för att visa aggregat.
+            </p>
+          )}
+
+          {!!departmentFilter && !isSearching && filteredSearchResults.length === 0 && (
+            <p className={styles.emptyState}>
+              Inga aggregat hittades för vald avdelning.
             </p>
           )}
         </section>

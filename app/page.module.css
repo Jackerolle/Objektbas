@@ -635,7 +635,7 @@
   margin-top: 0.7rem;
   display: grid;
   gap: 0.6rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 340px);
 }
 
 .searchResultList {
@@ -650,21 +650,40 @@
 .searchResultList li {
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 0.8rem;
-  padding: 0.75rem;
+  padding: 0.65rem;
   background: rgba(2, 6, 23, 0.68);
-}
-
-.searchResultList header {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.6rem;
-  margin-bottom: 0.25rem;
 }
 
 .searchResultList p {
   margin: 0;
   color: #c4d2df;
   font-size: 0.88rem;
+}
+
+.libraryAggregateRow {
+  width: 100%;
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.5);
+  color: #e2e8f0;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.libraryAggregateRow:hover {
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
+.libraryAggregateRow span {
+  font-size: 0.84rem;
+}
+
+.libraryAggregateDetails {
+  margin-top: 0.6rem;
 }
 
 .tags {
@@ -787,9 +806,8 @@
     grid-template-columns: 1fr;
   }
 
-  .searchResultList header {
-    flex-direction: column;
-    align-items: flex-start;
+  .libraryAggregateRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
