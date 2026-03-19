@@ -798,8 +798,13 @@ export default function HomePage() {
         typeof result.insertedFilterComponents === 'number'
           ? ` Synk: +${result.insertedFilterComponents} filter pa ${result.syncedAggregates ?? 0} aggregat.`
           : '';
+      const warningSummary = result.warnings?.length
+        ? ` Varning: ${result.warnings.slice(0, 2).join(' | ')}`
+        : '';
+      const zeroRowsSummary =
+        result.importedRows === 0 ? ' Inga datarader kunde tolkas fran filen.' : '';
       setStatus(
-        `Filterlista importerad (${result.importedRows}/${result.totalRows} rader).${syncSummary}`
+        `Filterlista importerad (${result.importedRows}/${result.totalRows} rader).${syncSummary}${zeroRowsSummary}${warningSummary}`
       );
       await handleLoadFilterList('');
     } catch (importError) {
