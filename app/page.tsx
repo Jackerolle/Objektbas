@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { CameraCapture } from '@/components/CameraCapture';
 import { PwaInstallPrompt } from '@/components/PwaInstallPrompt';
@@ -6,6 +6,7 @@ import {
   addAggregateComponent,
   analyzeComponentImage,
   analyzeSystemPosition,
+  createAggregateEvent,
   createAggregate,
   deleteAggregate,
   deleteAggregateComponent,
@@ -32,6 +33,7 @@ import {
   AggregateRecord,
   AppMode,
   ComponentType,
+  CreateAggregateComponentPayload,
   FilterListRow,
   SystemPositionAnalysis
 } from '@/lib/types';
@@ -57,8 +59,30 @@ type CapturedComponentDraft = {
   subComponent: string;
   identifiedValue: string;
   attributes: Record<string, string>;
+  overallConfidence: number;
+  identifiedValueConfidence: number;
+  attributeConfidence: Record<string, number>;
+  ocrText: string;
+  provider: string;
   notes: string;
 };
+
+type PendingDuplicateAction = {
+  payload: CreateAggregateComponentPayload;
+  source:
+    | {
+        kind: 'capture';
+        draft: CapturedComponentDraft;
+      }
+    | {
+        kind: 'manual';
+        summary: string;
+      };
+  candidateIds: string[];
+  selectedCandidateId: string;
+};
+
+type RoundStatus = 'OK' | 'Atgard kravs' | 'Akut';
 
 const ASSEMBLY_OPTIONS = ['Aggregat', 'Motor', 'Fl\u00e4kt', '\u00d6vrigt'] as const;
 type AssemblyOption = (typeof ASSEMBLY_OPTIONS)[number];
@@ -131,6 +155,7 @@ const CAPTURE_TASKS: CaptureTask[] = [
 const REQUIRED_TASK_IDS = CAPTURE_TASKS.filter((task) => task.required).map(
   (task) => task.id
 );
+const COMPONENT_TYPE_OPTIONS = Object.keys(COMPONENT_FIELD_CONFIG) as ComponentType[];
 
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -465,6 +490,30 @@ function formatAttributeLabel(key: string): string {
   return withSpaces.charAt(0).toUpperCase() + withSpaces.slice(1);
 }
 
+function normalizeCompareToken(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+function clampDraftConfidence(value: number | undefined): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 0.5;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function createFieldConfidenceMap(
+  componentType: ComponentType,
+  fallback = 0.5
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const field of COMPONENT_FIELD_CONFIG[componentType]) {
+    result[field.key] = clampDraftConfidence(fallback);
+  }
+
+  return result;
+}
+
 export default function HomePage() {
   const [mode, setMode] = useState<AppMode>('lagg-till');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -487,9 +536,18 @@ export default function HomePage() {
   const [captureSubComponent, setCaptureSubComponent] = useState('Motorskylt');
   const [capturedComponentDraft, setCapturedComponentDraft] =
     useState<CapturedComponentDraft | null>(null);
+  const [capturedComponentQueue, setCapturedComponentQueue] = useState<
+    CapturedComponentDraft[]
+  >([]);
   const [isSavingCaptureDraft, setIsSavingCaptureDraft] = useState(false);
+  const [isResolvingDuplicate, setIsResolvingDuplicate] = useState(false);
+  const [pendingDuplicateAction, setPendingDuplicateAction] =
+    useState<PendingDuplicateAction | null>(null);
   const [showManualPanel, setShowManualPanel] = useState(false);
   const cameraTriggerRef = useRef<(() => void) | null>(null);
+  const [activeVisitId, setActiveVisitId] = useState('');
+  const [activeVisitStartedAt, setActiveVisitStartedAt] = useState('');
+  const [isStartingVisit, setIsStartingVisit] = useState(false);
 
   const [manualComponentType, setManualComponentType] = useState<ComponentType>('Kilrem');
   const [manualAssembly, setManualAssembly] = useState<AssemblyOption>('Aggregat');
@@ -541,6 +599,16 @@ export default function HomePage() {
   const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
 
+  const [roundAggregateId, setRoundAggregateId] = useState('');
+  const [roundComponentType, setRoundComponentType] = useState<ComponentType>('Övrigt');
+  const [roundAssembly, setRoundAssembly] = useState<AssemblyOption>('Övrigt');
+  const [roundSubComponent, setRoundSubComponent] = useState('Notering');
+  const [roundStatus, setRoundStatus] = useState<RoundStatus>('OK');
+  const [roundIdentifiedValue, setRoundIdentifiedValue] = useState('');
+  const [roundNotes, setRoundNotes] = useState('');
+  const [roundAction, setRoundAction] = useState('');
+  const [isSavingRoundNote, setIsSavingRoundNote] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string>('');
 
@@ -580,6 +648,26 @@ export default function HomePage() {
       return bTime - aTime;
     });
   }, [departmentFilter, searchResults]);
+
+  const roundAggregate = useMemo(
+    () => searchResults.find((aggregate) => aggregate.id === roundAggregateId) ?? null,
+    [roundAggregateId, searchResults]
+  );
+
+  const roundSubComponentSuggestions = useMemo(
+    () => SUB_COMPONENT_PRESETS[roundAssembly] ?? [],
+    [roundAssembly]
+  );
+
+  const roundEvents = useMemo(() => {
+    if (!roundAggregateId) {
+      return [];
+    }
+
+    return (aggregateEventsById[roundAggregateId] ?? []).filter((event) =>
+      event.eventType.startsWith('round_') || event.eventType.startsWith('visit_')
+    );
+  }, [aggregateEventsById, roundAggregateId]);
 
   const captureSubComponentSuggestions = useMemo(
     () => SUB_COMPONENT_PRESETS[captureAssembly] ?? [],
@@ -621,6 +709,14 @@ export default function HomePage() {
       capturedComponentDraft.assembly
     );
   }, [capturedComponentDraft]);
+  const pendingDuplicateCandidates = useMemo(() => {
+    if (!pendingDuplicateAction || !currentAggregate) {
+      return [];
+    }
+
+    const idSet = new Set(pendingDuplicateAction.candidateIds);
+    return currentAggregate.components.filter((component) => idSet.has(component.id));
+  }, [currentAggregate, pendingDuplicateAction]);
 
   const clearFeedback = () => {
     setError(null);
@@ -653,7 +749,11 @@ export default function HomePage() {
     setSelectedTaskId('skylt');
     setCapturedPhotos({});
     setCapturedComponentDraft(null);
+    setCapturedComponentQueue([]);
+    setPendingDuplicateAction(null);
     setCurrentAggregate(null);
+    setActiveVisitId('');
+    setActiveVisitStartedAt('');
     setSystemPositionId('');
     setFlSystemPositionId('');
     setSeSystemPositionId('');
@@ -672,6 +772,14 @@ export default function HomePage() {
     setManualAttributes(createEmptyAttributes('Kilrem'));
     setManualNotes('');
     setShowManualPanel(false);
+    setRoundAggregateId('');
+    setRoundAssembly('Övrigt');
+    setRoundSubComponent('Notering');
+    setRoundComponentType('Övrigt');
+    setRoundStatus('OK');
+    setRoundIdentifiedValue('');
+    setRoundNotes('');
+    setRoundAction('');
     resetComponentEditing();
   };
 
@@ -696,6 +804,69 @@ export default function HomePage() {
     department: department.trim() || undefined,
     notes: aggregateNotes.trim() || undefined
   });
+
+  const findDuplicateCandidates = (
+    aggregate: AggregateRecord,
+    payload: CreateAggregateComponentPayload
+  ) => {
+    const componentType = normalizeCompareToken(payload.componentType);
+    const assembly = normalizeCompareToken(payload.assembly);
+    const subComponent = normalizeCompareToken(payload.subComponent);
+
+    return aggregate.components.filter((component) => {
+      if (normalizeCompareToken(component.componentType) !== componentType) {
+        return false;
+      }
+
+      if (normalizeCompareToken(component.assembly) !== assembly) {
+        return false;
+      }
+
+      return normalizeCompareToken(component.subComponent) === subComponent;
+    });
+  };
+
+  const applySavedAggregate = (updated: AggregateRecord) => {
+    setCurrentAggregate(updated);
+    syncAggregateInSearchResults(updated);
+  };
+
+  const startVisitForAggregate = async (
+    aggregate: AggregateRecord,
+    reason: 'manual' | 'auto' | 'rondering'
+  ): Promise<string> => {
+    if (activeVisitId && currentAggregate?.id === aggregate.id) {
+      return activeVisitId;
+    }
+
+    const visitId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `visit-${Date.now()}`;
+    const startedAt = new Date().toISOString();
+
+    setIsStartingVisit(true);
+    try {
+      await createAggregateEvent(aggregate.id, {
+        eventType: 'visit_started',
+        message: 'Nytt besök startat.',
+        metadata: {
+          visitId,
+          reason,
+          startedAt
+        }
+      });
+      setActiveVisitId(visitId);
+      setActiveVisitStartedAt(startedAt);
+      void loadAggregateEvents(aggregate.id, true);
+      return visitId;
+    } catch (visitError) {
+      setError(`Kunde inte starta besök: ${String(visitError)}`);
+      return '';
+    } finally {
+      setIsStartingVisit(false);
+    }
+  };
 
   const handleTaskSelection = (taskId: string) => {
     clearFeedback();
@@ -940,8 +1111,10 @@ export default function HomePage() {
             )
           : await ensureAggregate(resolvedId);
 
-        setCurrentAggregate(aggregate);
-        syncAggregateInSearchResults(aggregate);
+        applySavedAggregate(aggregate);
+        if (!activeVisitId) {
+          await startVisitForAggregate(aggregate, 'auto');
+        }
         const nextCaptured = { ...capturedPhotos, skylt: imageDataUrl };
         setCapturedPhotos(nextCaptured);
         void persistLocalPhoto(aggregate.id, 'skylt', imageDataUrl);
@@ -978,6 +1151,14 @@ export default function HomePage() {
 
       let identifiedValue = `Ej avläst (${task.label})`;
       let attributes = createEmptyAttributes(task.componentType);
+      let overallConfidence = 0.2;
+      let identifiedValueConfidence = 0.2;
+      let attributeConfidence: Record<string, number> = createFieldConfidenceMap(
+        task.componentType,
+        0.2
+      );
+      let ocrText = '';
+      let provider = 'fallback';
       let note = 'Automatiskt registrerad utan säker AI-tolkning.';
       setStatus(`Bild mottagen. Laser ${task.label.toLowerCase()} med lokal OCR...`);
 
@@ -985,6 +1166,17 @@ export default function HomePage() {
         const analysis = await analyzeComponentImage(task.componentType, imageDataUrl);
         identifiedValue = analysis.identifiedValue?.trim() || identifiedValue;
         attributes = normalizeAutoAttributes(task.componentType, analysis.suggestedAttributes);
+        overallConfidence = clampDraftConfidence(analysis.confidence);
+        identifiedValueConfidence = clampDraftConfidence(
+          analysis.identifiedValueConfidence ?? analysis.confidence
+        );
+        provider = analysis.provider || 'ocr';
+        ocrText = analysis.ocrText?.trim() ?? '';
+        for (const field of COMPONENT_FIELD_CONFIG[task.componentType]) {
+          attributeConfidence[field.key] = clampDraftConfidence(
+            analysis.attributeConfidence?.[field.key] ?? analysis.confidence
+          );
+        }
         note = `Automatiskt registrerad (${toPercent(analysis.confidence)}): ${analysis.notes}`;
       } catch (analysisError) {
         attributes = normalizeAutoAttributes(task.componentType, undefined);
@@ -996,7 +1188,7 @@ export default function HomePage() {
       void persistLocalPhoto(currentAggregate.id, task.id, imageDataUrl);
 
       const normalizedSubComponent = captureSubComponent.trim() || task.label;
-      setCapturedComponentDraft({
+      const nextDraft: CapturedComponentDraft = {
         taskId: task.id,
         taskLabel: task.label,
         imageDataUrl,
@@ -1005,14 +1197,25 @@ export default function HomePage() {
         notes: note,
         assembly: captureAssembly,
         subComponent: normalizedSubComponent,
-        attributes
-      });
+        attributes,
+        overallConfidence,
+        identifiedValueConfidence,
+        attributeConfidence,
+        ocrText,
+        provider
+      };
+
+      if (capturedComponentDraft) {
+        setCapturedComponentQueue((current) => [...current, nextDraft]);
+      } else {
+        setCapturedComponentDraft(nextDraft);
+      }
 
       const scopeText = [captureAssembly, normalizedSubComponent]
         .filter(Boolean)
         .join(' / ');
       setStatus(
-        `${task.label} tolkad. Kontrollera komponentutkastet och spara till biblioteket${scopeText ? ` (${scopeText})` : ''}.`
+        `${task.label} tolkad. Kontrollera komponentutkastet och spara till biblioteket${scopeText ? ` (${scopeText})` : ''}.${capturedComponentDraft ? ` (${capturedComponentQueue.length + 1} i kö)` : ''}`
       );
     } catch (captureError) {
       setError(`Kunde inte slutföra ${task.label.toLowerCase()}: ${String(captureError)}`);
@@ -1038,7 +1241,11 @@ export default function HomePage() {
         attributes:
           nextType === current.componentType
             ? current.attributes
-            : createEmptyAttributes(nextType)
+            : createEmptyAttributes(nextType),
+        attributeConfidence:
+          nextType === current.componentType
+            ? current.attributeConfidence
+            : createFieldConfidenceMap(nextType, current.overallConfidence)
       };
     });
   };
@@ -1057,7 +1264,11 @@ export default function HomePage() {
         attributes:
           nextType === current.componentType
             ? current.attributes
-            : createEmptyAttributes(nextType)
+            : createEmptyAttributes(nextType),
+        attributeConfidence:
+          nextType === current.componentType
+            ? current.attributeConfidence
+            : createFieldConfidenceMap(nextType, current.overallConfidence)
       };
     });
   };
@@ -1109,20 +1320,35 @@ export default function HomePage() {
       return;
     }
 
+    const payload: CreateAggregateComponentPayload = {
+      componentType: resolvedType,
+      identifiedValue: identifiedValue.trim(),
+      notes: capturedComponentDraft.notes.trim() || undefined,
+      assembly: capturedComponentDraft.assembly,
+      subComponent: capturedComponentDraft.subComponent.trim(),
+      attributes: scopedAttributes,
+      visitId: activeVisitId || undefined
+    };
+
+    const duplicateCandidates = findDuplicateCandidates(currentAggregate, payload);
+    if (duplicateCandidates.length > 0) {
+      setPendingDuplicateAction({
+        payload,
+        source: {
+          kind: 'capture',
+          draft: capturedComponentDraft
+        },
+        candidateIds: duplicateCandidates.map((component) => component.id),
+        selectedCandidateId: duplicateCandidates[0].id
+      });
+      return;
+    }
+
     setIsSavingCaptureDraft(true);
 
     try {
-      const updated = await addAggregateComponent(currentAggregate.id, {
-        componentType: resolvedType,
-        identifiedValue: identifiedValue.trim(),
-        notes: capturedComponentDraft.notes.trim() || undefined,
-        assembly: capturedComponentDraft.assembly,
-        subComponent: capturedComponentDraft.subComponent.trim(),
-        attributes: scopedAttributes
-      });
-
-      setCurrentAggregate(updated);
-      syncAggregateInSearchResults(updated);
+      const updated = await addAggregateComponent(currentAggregate.id, payload);
+      applySavedAggregate(updated);
 
       const nextTask = getNextTaskId(capturedComponentDraft.taskId, {
         ...capturedPhotos,
@@ -1133,11 +1359,170 @@ export default function HomePage() {
       setStatus(
         `${capturedComponentDraft.taskLabel} sparad i biblioteket. Fortsatt med nasta fotopunkt eller ta fler bilder i samma kategori.`
       );
-      setCapturedComponentDraft(null);
+
+      if (capturedComponentQueue.length > 0) {
+        const [nextDraft, ...rest] = capturedComponentQueue;
+        setCapturedComponentQueue(rest);
+        setCapturedComponentDraft(nextDraft);
+      } else {
+        setCapturedComponentDraft(null);
+      }
     } catch (saveError) {
       setError(`Kunde inte spara komponentutkast: ${String(saveError)}`);
     } finally {
       setIsSavingCaptureDraft(false);
+    }
+  };
+
+  const handleResolveDuplicateAction = async (mode: 'update' | 'new') => {
+    clearFeedback();
+
+    if (!currentAggregate || !pendingDuplicateAction) {
+      return;
+    }
+
+    const source = pendingDuplicateAction.source;
+    setIsResolvingDuplicate(true);
+
+    try {
+      const updated =
+        mode === 'update'
+          ? await updateAggregateComponent(
+              currentAggregate.id,
+              pendingDuplicateAction.selectedCandidateId,
+              pendingDuplicateAction.payload
+            )
+          : await addAggregateComponent(currentAggregate.id, pendingDuplicateAction.payload);
+
+      applySavedAggregate(updated);
+
+      if (source.kind === 'capture') {
+        const draft = source.draft;
+        const nextTask = getNextTaskId(draft.taskId, {
+          ...capturedPhotos,
+          [draft.taskId]: draft.imageDataUrl
+        });
+        setSelectedTaskId(nextTask);
+        setStatus(
+          mode === 'update'
+            ? `${draft.taskLabel} uppdaterade befintlig komponent i biblioteket.`
+            : `${draft.taskLabel} sparad som ny komponentpost i biblioteket.`
+        );
+
+        if (capturedComponentQueue.length > 0) {
+          const [nextDraft, ...rest] = capturedComponentQueue;
+          setCapturedComponentQueue(rest);
+          setCapturedComponentDraft(nextDraft);
+        } else {
+          setCapturedComponentDraft(null);
+        }
+      } else {
+        const nextManualType = isKnownComponentType(
+          pendingDuplicateAction.payload.componentType
+        )
+          ? pendingDuplicateAction.payload.componentType
+          : manualComponentType;
+        setManualValue('');
+        setManualExtraValues('');
+        setManualAttributes(createEmptyAttributes(nextManualType));
+        setManualNotes('');
+        setStatus(
+          mode === 'update'
+            ? 'Manuell post uppdaterade befintlig komponent.'
+            : 'Manuell post sparad som ny komponent.'
+        );
+      }
+
+      setPendingDuplicateAction(null);
+    } catch (saveError) {
+      setError(`Kunde inte slutföra dubletthantering: ${String(saveError)}`);
+    } finally {
+      setIsResolvingDuplicate(false);
+    }
+  };
+
+  const handleRoundPhotoCapture = async (imageDataUrl: string) => {
+    clearFeedback();
+
+    try {
+      const analysis = await analyzeComponentImage(roundComponentType, imageDataUrl);
+      const attributes = normalizeAutoAttributes(
+        roundComponentType,
+        analysis.suggestedAttributes
+      );
+      const attributePreview = Object.entries(attributes)
+        .filter(([, value]) => value?.trim() && value !== 'Ej avläst')
+        .slice(0, 2)
+        .map(([key, value]) => `${formatAttributeLabel(key)}: ${value}`)
+        .join(' | ');
+
+      setRoundIdentifiedValue(analysis.identifiedValue?.trim() || roundIdentifiedValue);
+      setRoundNotes((current) => {
+        const prefix = current.trim() ? `${current.trim()}\n` : '';
+        const details = [
+          `OCR ${toPercent(analysis.confidence)} (${analysis.provider})`,
+          analysis.notes?.trim(),
+          attributePreview ? `Fält: ${attributePreview}` : ''
+        ]
+          .filter(Boolean)
+          .join(' | ');
+        return `${prefix}${details}`.slice(0, 700);
+      });
+      setStatus('Ronderingsfoto avläst. Kontrollera värden och spara notering.');
+    } catch (analysisError) {
+      setError(`Kunde inte läsa ronderingsfoto: ${String(analysisError)}`);
+    }
+  };
+
+  const handleSaveRoundNote = async () => {
+    clearFeedback();
+
+    if (!roundAggregate) {
+      setError('Välj ett aggregat för rondering.');
+      return;
+    }
+
+    if (!roundSubComponent.trim()) {
+      setError('Underkategori krävs för rondering.');
+      return;
+    }
+
+    if (!roundNotes.trim() && !roundAction.trim() && !roundIdentifiedValue.trim()) {
+      setError('Lägg in notering, åtgärd eller identifierat värde.');
+      return;
+    }
+
+    setIsSavingRoundNote(true);
+    try {
+      const currentVisit =
+        activeVisitId && currentAggregate?.id === roundAggregate.id
+          ? activeVisitId
+          : await startVisitForAggregate(roundAggregate, 'rondering');
+
+      await createAggregateEvent(roundAggregate.id, {
+        eventType: 'round_note_added',
+        message: `Rondering: ${roundStatus} (${roundAssembly} / ${roundSubComponent.trim()})`,
+        metadata: {
+          status: roundStatus,
+          componentType: roundComponentType,
+          assembly: roundAssembly,
+          subComponent: roundSubComponent.trim(),
+          identifiedValue: roundIdentifiedValue.trim(),
+          notes: roundNotes.trim(),
+          action: roundAction.trim(),
+          visitId: currentVisit || ''
+        }
+      });
+
+      setRoundIdentifiedValue('');
+      setRoundNotes('');
+      setRoundAction('');
+      setStatus('Ronderingsnotering sparad.');
+      void loadAggregateEvents(roundAggregate.id, true);
+    } catch (roundError) {
+      setError(`Kunde inte spara ronderingsnotering: ${String(roundError)}`);
+    } finally {
+      setIsSavingRoundNote(false);
     }
   };
 
@@ -1193,8 +1578,10 @@ export default function HomePage() {
 
     try {
       const created = await ensureAggregate(candidateId);
-      setCurrentAggregate(created);
-      syncAggregateInSearchResults(created);
+      applySavedAggregate(created);
+      if (!activeVisitId) {
+        await startVisitForAggregate(created, 'manual');
+      }
 
       const nextCaptured = {
         ...capturedPhotos,
@@ -1210,10 +1597,14 @@ export default function HomePage() {
     }
   };
 
-  const handleOpenAggregateForEditing = (aggregate: AggregateRecord) => {
+  const handleOpenAggregateForEditing = async (aggregate: AggregateRecord) => {
     resetComponentEditing();
     setCapturedComponentDraft(null);
-    setCurrentAggregate(aggregate);
+    setCapturedComponentQueue([]);
+    setPendingDuplicateAction(null);
+    applySavedAggregate(aggregate);
+    setActiveVisitId('');
+    setActiveVisitStartedAt('');
     setStartMethod('foto');
     setIsAddModalOpen(false);
     setSystemPositionId(aggregate.systemPositionId);
@@ -1226,6 +1617,41 @@ export default function HomePage() {
     setSelectedTaskId('kilrem');
     setMode('lagg-till');
     setStatus(`\u00d6ppnade aggregat ${aggregate.systemPositionId} f\u00f6r redigering.`);
+    await startVisitForAggregate(aggregate, 'manual');
+  };
+
+  const handleStartNewVisit = async () => {
+    clearFeedback();
+
+    if (!currentAggregate) {
+      setError('Öppna eller skapa ett aggregat först.');
+      return;
+    }
+
+    const startedVisitId = await startVisitForAggregate(currentAggregate, 'manual');
+    if (startedVisitId) {
+      setStatus(
+        `Nytt besök startat ${formatDateTimeSv(new Date().toISOString())} (${startedVisitId.slice(0, 8)}).`
+      );
+    }
+  };
+
+  const handleStartRoundVisit = async () => {
+    clearFeedback();
+
+    if (!roundAggregate) {
+      setError('Välj ett aggregat i rondering.');
+      return;
+    }
+
+    const startedVisitId = await startVisitForAggregate(roundAggregate, 'rondering');
+    if (startedVisitId) {
+      setStatus(
+        `Ronderingsbesök startat ${formatDateTimeSv(
+          new Date().toISOString()
+        )} (${startedVisitId.slice(0, 8)}).`
+      );
+    }
   };
 
   const handleManualAssemblyChange = (nextAssembly: AssemblyOption) => {
@@ -1247,6 +1673,19 @@ export default function HomePage() {
     setManualValue('');
     setManualExtraValues('');
     setManualAttributes(createEmptyAttributes(nextType));
+  };
+
+  const handleRoundAssemblyChange = (nextAssembly: AssemblyOption) => {
+    const nextSubComponent = (SUB_COMPONENT_PRESETS[nextAssembly] ?? [])[0] ?? 'Notering';
+    const nextType = resolveComponentTypeFromScope(nextAssembly, nextSubComponent);
+    setRoundAssembly(nextAssembly);
+    setRoundSubComponent(nextSubComponent);
+    setRoundComponentType(nextType);
+  };
+
+  const handleRoundSubComponentChange = (nextSubComponent: string) => {
+    setRoundSubComponent(nextSubComponent);
+    setRoundComponentType(resolveComponentTypeFromScope(roundAssembly, nextSubComponent));
   };
 
   const handleManualSave = async () => {
@@ -1306,19 +1745,44 @@ export default function HomePage() {
 
     try {
       let updated = currentAggregate;
+      const basePayload = {
+        componentType: resolvedType,
+        assembly: manualAssembly,
+        subComponent: manualSubComponent.trim(),
+        attributes: scopedAttributes,
+        notes: manualNotes.trim() || 'Manuellt registrerad post.',
+        visitId: activeVisitId || undefined
+      };
+
+      if (valuesToSave.length === 1) {
+        const payload: CreateAggregateComponentPayload = {
+          ...basePayload,
+          identifiedValue: valuesToSave[0]
+        };
+        const duplicateCandidates = findDuplicateCandidates(updated, payload);
+        if (duplicateCandidates.length > 0) {
+          setPendingDuplicateAction({
+            payload,
+            source: {
+              kind: 'manual',
+              summary: `${manualAssembly} / ${manualSubComponent.trim()}`
+            },
+            candidateIds: duplicateCandidates.map((component) => component.id),
+            selectedCandidateId: duplicateCandidates[0].id
+          });
+          return;
+        }
+      }
+
       for (const value of valuesToSave) {
         updated = await addAggregateComponent(updated.id, {
-          componentType: resolvedType,
+          ...basePayload,
           identifiedValue: value,
-          assembly: manualAssembly,
-          subComponent: manualSubComponent.trim(),
-          attributes: scopedAttributes,
-          notes: manualNotes.trim() || 'Manuellt registrerad post.'
+          visitId: activeVisitId || undefined
         });
       }
 
-      setCurrentAggregate(updated);
-      syncAggregateInSearchResults(updated);
+      applySavedAggregate(updated);
       setManualValue('');
       setManualExtraValues('');
       setManualAttributes(createEmptyAttributes(resolvedType));
@@ -1447,7 +1911,8 @@ export default function HomePage() {
         assembly: editingAssembly,
         subComponent: editingSubComponent.trim(),
         attributes: scopedAttributes,
-        notes: editingNotes.trim() || undefined
+        notes: editingNotes.trim() || undefined,
+        visitId: activeVisitId || undefined
       });
 
       setCurrentAggregate(updated);
@@ -1592,6 +2057,19 @@ export default function HomePage() {
           >
             Filterlista
           </button>
+          <button
+            onClick={() => {
+              setMode('rondering');
+              if (!searchResults.length) {
+                void handleSearch('');
+              }
+            }}
+            className={`${styles.modeButton} ${
+              mode === 'rondering' ? styles.modeButtonActive : ''
+            }`}
+          >
+            Rondering
+          </button>
         </div>
         <div className={styles.installPromptRow}>
           <PwaInstallPrompt />
@@ -1612,6 +2090,65 @@ export default function HomePage() {
             <div className={styles.choiceButtons}>
               <button onClick={() => chooseStartMethod('foto')}>Fota</button>
               <button onClick={() => chooseStartMethod('manuell')}>Lägg in manuellt</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {pendingDuplicateAction && (
+        <div className={styles.modalBackdrop} onClick={() => setPendingDuplicateAction(null)}>
+          <section
+            className={styles.choiceModal}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Dublett hittad i aggregatet</h2>
+            <p>
+              Komponent med samma huvudkategori/underkategori finns redan. Välj hur du vill
+              fortsätta.
+            </p>
+
+            <div className={styles.componentList}>
+              {pendingDuplicateCandidates.map((component) => (
+                <label key={`dup-${component.id}`} className={styles.taskButton}>
+                  <input
+                    type='radio'
+                    name='duplicate-candidate'
+                    checked={pendingDuplicateAction.selectedCandidateId === component.id}
+                    onChange={() =>
+                      setPendingDuplicateAction((current) =>
+                        current
+                          ? {
+                              ...current,
+                              selectedCandidateId: component.id
+                            }
+                          : current
+                      )
+                    }
+                  />
+                  <div>
+                    <strong>
+                      {component.componentType} · {component.assembly ?? '-'} /{' '}
+                      {component.subComponent ?? '-'}
+                    </strong>
+                    <p>Nuvarande värde: {component.identifiedValue}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className={styles.choiceButtons}>
+              <button
+                onClick={() => void handleResolveDuplicateAction('update')}
+                disabled={isResolvingDuplicate}
+              >
+                {isResolvingDuplicate ? 'Sparar...' : 'Uppdatera befintlig'}
+              </button>
+              <button
+                onClick={() => void handleResolveDuplicateAction('new')}
+                disabled={isResolvingDuplicate}
+              >
+                {isResolvingDuplicate ? 'Sparar...' : 'Lägg som ny post'}
+              </button>
             </div>
           </section>
         </div>
@@ -1733,6 +2270,7 @@ export default function HomePage() {
                 subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
                 captureLabel='Ta foto med enhet'
                 uploadLabel='Ladda upp foto'
+                allowBatchUpload={selectedTask.id !== 'skylt'}
                 helperText={
                   selectedTask.id === 'skylt'
                     ? 'Objektskylt först. Du kan skapa aggregat manuellt i Aggregatram.'
@@ -1852,6 +2390,13 @@ export default function HomePage() {
                         ? 'Tar bort aggregat...'
                         : 'Ta bort aggregat'}
                     </button>
+                    <button
+                      className={styles.inlineButton}
+                      onClick={() => void handleStartNewVisit()}
+                      disabled={isStartingVisit}
+                    >
+                      {isStartingVisit ? 'Startar besök...' : 'Nytt besök'}
+                    </button>
                   </>
                 )}
 
@@ -1862,18 +2407,46 @@ export default function HomePage() {
                   {showManualPanel ? 'Dölj manuell inmatning' : 'Manuell inmatning'}
                 </button>
               </div>
+              {currentAggregate && activeVisitId && (
+                <p className={styles.inlineStatus}>
+                  Aktivt besök: {formatDateTimeSv(activeVisitStartedAt)} · ID {activeVisitId.slice(0, 8)}
+                </p>
+              )}
             </article>
 
             <article className={styles.card}>
               <div className={styles.cardHeader}>
                 <h2>Komponentutkast från foto</h2>
                 <span className={styles.badge}>
-                  {capturedComponentDraft ? 'Redo att spara' : 'Ingen väntande avläsning'}
+                  {capturedComponentDraft
+                    ? capturedComponentQueue.length
+                      ? `Redo + ${capturedComponentQueue.length} i kö`
+                      : 'Redo att spara'
+                    : 'Ingen väntande avläsning'}
                 </span>
               </div>
+              {!!capturedComponentQueue.length && (
+                <p className={styles.inlineStatus}>
+                  {capturedComponentQueue.length} foton väntar i kö för kontroll/sparning.
+                </p>
+              )}
 
               {capturedComponentDraft ? (
                 <div className={styles.componentEditGrid}>
+                  <div className={`${styles.ocrAudit} ${styles.fullRow}`}>
+                    <p>
+                      OCR-kontroll ({capturedComponentDraft.provider}): Total{' '}
+                      {toPercent(capturedComponentDraft.overallConfidence)}
+                    </p>
+                    <p>
+                      Identifierat värde:{' '}
+                      {toPercent(capturedComponentDraft.identifiedValueConfidence)}
+                    </p>
+                    {capturedComponentDraft.ocrText?.trim() && (
+                      <p>OCR-text: {capturedComponentDraft.ocrText.slice(0, 220)}</p>
+                    )}
+                  </div>
+
                   <label>
                     Huvudkategori
                     <select
@@ -1906,7 +2479,10 @@ export default function HomePage() {
                   </label>
 
                   <label className={styles.fullRow}>
-                    Identifierat värde
+                    Identifierat värde{' '}
+                    <span className={styles.confidenceChip}>
+                      {toPercent(capturedComponentDraft.identifiedValueConfidence)}
+                    </span>
                     <input
                       value={capturedComponentDraft.identifiedValue}
                       onChange={(event) =>
@@ -1925,7 +2501,10 @@ export default function HomePage() {
 
                   {captureDraftFieldConfig.map((field) => (
                     <label key={`draft-field-${field.key}`}>
-                      {field.label}
+                      {field.label}{' '}
+                      <span className={styles.confidenceChip}>
+                        {toPercent(capturedComponentDraft.attributeConfidence[field.key] ?? 0)}
+                      </span>
                       <input
                         value={capturedComponentDraft.attributes[field.key] ?? ''}
                         onChange={(event) =>
@@ -1978,13 +2557,21 @@ export default function HomePage() {
                     <button
                       className={styles.manualSaveButton}
                       onClick={() => void handleSaveCaptureDraft()}
-                      disabled={!aggregateReady || isSavingCaptureDraft}
+                      disabled={!aggregateReady || isSavingCaptureDraft || isResolvingDuplicate}
                     >
                       {isSavingCaptureDraft ? 'Sparar...' : 'Spara till biblioteket'}
                     </button>
                     <button
                       className={styles.inlineButton}
-                      onClick={() => setCapturedComponentDraft(null)}
+                      onClick={() => {
+                        if (capturedComponentQueue.length > 0) {
+                          const [nextDraft, ...rest] = capturedComponentQueue;
+                          setCapturedComponentQueue(rest);
+                          setCapturedComponentDraft(nextDraft);
+                        } else {
+                          setCapturedComponentDraft(null);
+                        }
+                      }}
                       disabled={isSavingCaptureDraft}
                     >
                       Rensa utkast
@@ -2089,10 +2676,10 @@ export default function HomePage() {
 
                 <div className={styles.inlineEditActions}>
                   <button
-                    className={styles.manualSaveButton}
-                    onClick={handleManualSave}
-                    disabled={!aggregateReady || isSavingManual}
-                  >
+                      className={styles.manualSaveButton}
+                      onClick={handleManualSave}
+                      disabled={!aggregateReady || isSavingManual || isResolvingDuplicate}
+                    >
                     {isSavingManual ? 'Sparar...' : 'Spara manuell post'}
                   </button>
                 </div>
@@ -2415,7 +3002,7 @@ export default function HomePage() {
                       <div className={styles.resultActions}>
                         <button
                           className={styles.openButton}
-                          onClick={() => handleOpenAggregateForEditing(aggregate)}
+                          onClick={() => void handleOpenAggregateForEditing(aggregate)}
                         >
                           {'\u00d6ppna f\u00f6r redigering'}
                         </button>
@@ -2444,6 +3031,227 @@ export default function HomePage() {
             <p className={styles.emptyState}>
               Inga aggregat hittades för vald avdelning.
             </p>
+          )}
+        </section>
+      ) : mode === 'rondering' ? (
+        <section className={styles.searchCard}>
+          <div className={styles.cardHeader}>
+            <h2>Rondering</h2>
+            <span className={styles.badge}>
+              {roundAggregate ? `AG ${roundAggregate.systemPositionId}` : 'Välj aggregat'}
+            </span>
+          </div>
+
+          <p className={styles.heroText}>
+            Fota eller fyll i manuellt under ronden och spara noteringar med åtgärdsbehov.
+          </p>
+
+          <div className={styles.libraryToolbar}>
+            <label>
+              Avdelning
+              <select
+                value={departmentFilter}
+                onChange={(event) => {
+                  setDepartmentFilter(event.target.value);
+                  setRoundAggregateId('');
+                }}
+              >
+                <option value=''>Välj avdelning</option>
+                {DEPARTMENT_PRESETS.map((option) => (
+                  <option key={`round-dept-${option}`} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {!!departmentFilter && (
+              <label>
+                Aggregat
+                <select
+                  value={roundAggregateId}
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    setRoundAggregateId(nextId);
+                    if (nextId) {
+                      void loadAggregateEvents(nextId, true);
+                    }
+                  }}
+                >
+                  <option value=''>Välj aggregat</option>
+                  {filteredSearchResults.map((aggregate) => (
+                    <option key={`round-aggregate-${aggregate.id}`} value={aggregate.id}>
+                      {aggregate.systemPositionId} · {aggregate.position || 'Utan position'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {!departmentFilter && (
+            <p className={styles.emptyState}>Välj avdelning för att starta rondering.</p>
+          )}
+
+          {!!departmentFilter && !filteredSearchResults.length && (
+            <p className={styles.emptyState}>Inga aggregat hittades för vald avdelning.</p>
+          )}
+
+          {!!roundAggregate && (
+            <div className={styles.workspace}>
+              <article className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <h2>Ny ronderingsnotering</h2>
+                  <span className={styles.badge}>Besöksspårad</span>
+                </div>
+
+                <div className={styles.scopeGrid}>
+                  <label>
+                    Huvudkategori
+                    <select
+                      value={roundAssembly}
+                      onChange={(event) =>
+                        handleRoundAssemblyChange(event.target.value as AssemblyOption)
+                      }
+                    >
+                      {ASSEMBLY_OPTIONS.map((option) => (
+                        <option key={`round-assembly-${option}`} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Underkategori
+                    <input
+                      value={roundSubComponent}
+                      onChange={(event) => handleRoundSubComponentChange(event.target.value)}
+                      list='round-subcomponent-presets'
+                      placeholder='Exempel: Lager motorsida'
+                    />
+                    <datalist id='round-subcomponent-presets'>
+                      {roundSubComponentSuggestions.map((option) => (
+                        <option key={`round-sub-${option}`} value={option} />
+                      ))}
+                    </datalist>
+                  </label>
+                </div>
+
+                <div className={styles.scopeGrid}>
+                  <label>
+                    Komponenttyp
+                    <select
+                      value={roundComponentType}
+                      onChange={(event) =>
+                        setRoundComponentType(event.target.value as ComponentType)
+                      }
+                    >
+                      {COMPONENT_TYPE_OPTIONS.map((componentType) => (
+                        <option key={`round-type-${componentType}`} value={componentType}>
+                          {componentType}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Status
+                    <select
+                      value={roundStatus}
+                      onChange={(event) => setRoundStatus(event.target.value as RoundStatus)}
+                    >
+                      <option value='OK'>OK</option>
+                      <option value='Atgard kravs'>Åtgärd krävs</option>
+                      <option value='Akut'>Akut</option>
+                    </select>
+                  </label>
+                </div>
+
+                <CameraCapture
+                  onCapture={handleRoundPhotoCapture}
+                  title='Fota komponent för rondering'
+                  subtitle='Rondfoto'
+                  captureLabel='Ta rondfoto'
+                  uploadLabel='Ladda upp rondfoto'
+                  helperText='Bilden sparas inte i molnet, bara avläsning används.'
+                  disabled={isSavingRoundNote}
+                />
+
+                <div className={styles.manualGrid}>
+                  <label>
+                    Identifierat värde
+                    <input
+                      value={roundIdentifiedValue}
+                      onChange={(event) => setRoundIdentifiedValue(event.target.value)}
+                      placeholder='Exempel: 6205-2RS C3'
+                    />
+                  </label>
+                  <label>
+                    Åtgärd
+                    <input
+                      value={roundAction}
+                      onChange={(event) => setRoundAction(event.target.value)}
+                      placeholder='Exempel: Byt vid nästa stopp'
+                    />
+                  </label>
+                  <label className={styles.fullRow}>
+                    Notering
+                    <textarea
+                      value={roundNotes}
+                      onChange={(event) => setRoundNotes(event.target.value)}
+                      placeholder='Skriv vad som observerats under ronden.'
+                    />
+                  </label>
+                </div>
+
+                <div className={styles.inlineEditActions}>
+                  <button
+                    className={styles.manualSaveButton}
+                    onClick={() => void handleSaveRoundNote()}
+                    disabled={isSavingRoundNote}
+                  >
+                    {isSavingRoundNote ? 'Sparar...' : 'Spara ronderingsnotering'}
+                  </button>
+                  <button
+                    className={styles.inlineButton}
+                    onClick={() => void handleStartRoundVisit()}
+                    disabled={isStartingVisit}
+                  >
+                    {isStartingVisit ? 'Startar besök...' : 'Nytt besök'}
+                  </button>
+                </div>
+              </article>
+
+              <article className={styles.card}>
+                <div className={styles.cardHeader}>
+                  <h2>Ronderingslogg</h2>
+                  <button
+                    className={styles.inlineButton}
+                    onClick={() => void loadAggregateEvents(roundAggregate.id, true)}
+                    disabled={loadingAggregateEventsId === roundAggregate.id}
+                  >
+                    {loadingAggregateEventsId === roundAggregate.id ? 'Laddar...' : 'Uppdatera'}
+                  </button>
+                </div>
+
+                {!!roundEvents.length ? (
+                  <ul className={styles.eventLogList}>
+                    {roundEvents.map((event) => (
+                      <li key={`round-event-${event.id}`}>
+                        <span className={styles.eventLogTime}>{formatDateTimeSv(event.createdAt)}</span>
+                        <span>{event.message}</span>
+                        <span className={styles.eventLogMeta}>
+                          {formatEventMetadata(event.metadata)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className={styles.emptyState}>Inga ronderingshändelser loggade ännu.</p>
+                )}
+              </article>
+            </div>
           )}
         </section>
       ) : (
@@ -2540,3 +3348,4 @@ export default function HomePage() {
     </main>
   );
 }
+

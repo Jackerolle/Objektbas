@@ -13,6 +13,8 @@ const SYSTEM_ID_PATTERN = /\b\d{3}[A-Z]{2}\d{3,4}\b/g;
 type OpenAiJson = {
   systemPositionId?: string;
   confidence?: number;
+  identifiedValueConfidence?: number;
+  attributeConfidence?: Record<string, unknown>;
   notes?: string;
   ocrText?: string;
   componentType?: string;
@@ -87,6 +89,25 @@ function clampConfidence(value: number | undefined): number {
   }
 
   return Math.max(0, Math.min(1, value));
+}
+
+function normalizeConfidenceMap(
+  input: Record<string, unknown> | undefined,
+  fallbackConfidence: number,
+  allowedKeys: string[]
+): Record<string, number> {
+  const result: Record<string, number> = {};
+  const source = input ?? {};
+
+  for (const key of allowedKeys) {
+    const raw = source[key];
+    result[key] =
+      typeof raw === 'number' && Number.isFinite(raw)
+        ? clampConfidence(raw)
+        : fallbackConfidence;
+  }
+
+  return result;
 }
 
 function pickBestIdFromText(raw: string): string {
@@ -268,6 +289,13 @@ export async function analyzeComponentWithOpenAi(
       componentType: resolvedComponentType,
       identifiedValue: `Manuell avlasning: ${resolvedComponentType}`,
       confidence: 0.1,
+      identifiedValueConfidence: 0.1,
+      attributeConfidence: normalizeConfidenceMap(
+        undefined,
+        0.1,
+        COMPONENT_FIELD_CONFIG[resolvedComponentType].map((field) => field.key)
+      ),
+      ocrText: '',
       notes: 'OPENAI_API_KEY saknas. Fyll i komponent manuellt.',
       provider: 'openai-missing-key',
       requiresManualConfirmation: true,
@@ -280,11 +308,12 @@ export async function analyzeComponentWithOpenAi(
 
   const prompt =
     `Analysera ventilationskomponenten "${resolvedComponentType}". ` +
-    `Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, notes, ocrText, suggestedAttributes. ` +
+    `Returnera ENDAST JSON med falten componentType, identifiedValue, confidence, identifiedValueConfidence, notes, ocrText, suggestedAttributes, attributeConfidence. ` +
     `componentType ska vara "${resolvedComponentType}". ` +
     `Alla mojliga attributnycklar: ${allFields.join(', ') || 'inga'}. ` +
     `Obligatoriska attributnycklar: ${requiredFields.join(', ') || 'inga'}. ` +
-    'identifiedValue ska vara kort och praktisk (modell/beteckning/storlek).';
+    'identifiedValue ska vara kort och praktisk (modell/beteckning/storlek). ' +
+    'attributeConfidence ska vara objekt med confidence 0..1 per attributnyckel.';
 
   try {
     const parsed = await callOpenAiJson(prompt, imageDataUrl);
@@ -292,6 +321,15 @@ export async function analyzeComponentWithOpenAi(
       ...createEmptyAttributes(resolvedComponentType),
       ...normalizeAttributes(parsed.suggestedAttributes)
     };
+    const confidence = clampConfidence(parsed.confidence);
+    const identifiedValueConfidence = clampConfidence(
+      parsed.identifiedValueConfidence
+    );
+    const attributeConfidence = normalizeConfidenceMap(
+      parsed.attributeConfidence,
+      confidence,
+      allFields
+    );
 
     const notes: string[] = [];
     if (parsed.notes?.trim()) {
@@ -308,7 +346,10 @@ export async function analyzeComponentWithOpenAi(
       componentType: resolvedComponentType,
       identifiedValue:
         parsed.identifiedValue?.trim() || `Okand ${resolvedComponentType}`,
-      confidence: clampConfidence(parsed.confidence),
+      confidence,
+      identifiedValueConfidence,
+      attributeConfidence,
+      ocrText: parsed.ocrText?.trim() ?? '',
       notes: notes.join(' '),
       provider: 'openai',
       requiresManualConfirmation: true,
@@ -319,6 +360,9 @@ export async function analyzeComponentWithOpenAi(
       componentType: resolvedComponentType,
       identifiedValue: `Okand ${resolvedComponentType}`,
       confidence: 0.2,
+      identifiedValueConfidence: 0.2,
+      attributeConfidence: normalizeConfidenceMap(undefined, 0.2, allFields),
+      ocrText: '',
       notes: `OpenAI-komponentanalys misslyckades: ${summarizeOpenAiError(error)}`,
       provider: 'openai-error',
       requiresManualConfirmation: true,

@@ -625,6 +625,32 @@
   resize: vertical;
 }
 
+.ocrAudit {
+  border: 1px solid rgba(56, 189, 248, 0.32);
+  border-radius: 0.7rem;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 0.55rem;
+}
+
+.ocrAudit p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #cde4ff;
+}
+
+.ocrAudit p + p {
+  margin-top: 0.2rem;
+}
+
+.confidenceChip {
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  background: rgba(8, 47, 73, 0.55);
+  color: #a5f3fc;
+  padding: 0.12rem 0.42rem;
+}
+
 .inlineEditActions {
   grid-column: 1 / -1;
   display: flex;

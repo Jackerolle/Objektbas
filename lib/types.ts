@@ -28,7 +28,12 @@ export type ObservationPayload = {
 
 export type SyncState = 'idle' | 'syncing' | 'offline';
 
-export type AppMode = 'lagg-till' | 'sok' | 'filterlista' | 'importera';
+export type AppMode =
+  | 'lagg-till'
+  | 'sok'
+  | 'filterlista'
+  | 'importera'
+  | 'rondering';
 
 export type ComponentType =
   | 'Motor'
@@ -55,6 +60,9 @@ export type ComponentAnalysis = {
   componentType: string;
   identifiedValue: string;
   confidence: number;
+  identifiedValueConfidence?: number;
+  attributeConfidence?: Record<string, number>;
+  ocrText?: string;
   notes: string;
   provider: string;
   requiresManualConfirmation: boolean;
@@ -77,8 +85,15 @@ export type CreateAggregateComponentPayload = {
   notes?: string;
   assembly?: string;
   subComponent?: string;
+  visitId?: string;
   imageDataUrl?: string;
   attributes?: Record<string, string>;
+};
+
+export type CreateAggregateEventPayload = {
+  eventType: string;
+  message: string;
+  metadata?: Record<string, string>;
 };
 
 export type AggregateComponent = {

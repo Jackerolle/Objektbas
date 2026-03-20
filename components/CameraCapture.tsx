@@ -11,6 +11,7 @@ type Props = {
   helperText?: string;
   disabled?: boolean;
   uploadLabel?: string;
+  allowBatchUpload?: boolean;
   onRegisterCameraTrigger?: ((trigger: (() => void) | null) => void) | undefined;
 };
 
@@ -172,6 +173,7 @@ export function CameraCapture({
   helperText,
   disabled = false,
   uploadLabel = 'Ladda upp foto',
+  allowBatchUpload = false,
   onRegisterCameraTrigger
 }: Props) {
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -305,10 +307,10 @@ export function CameraCapture({
     event: ChangeEvent<HTMLInputElement>,
     source: FileSource
   ) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
 
-    if (!file || disabled || isSubmitting) {
+    if (!files.length || disabled || isSubmitting) {
       return;
     }
 
@@ -316,13 +318,21 @@ export function CameraCapture({
     setIsUploading(true);
 
     try {
-      const dataUrl = await processFileToDataUrl(file);
-      await emitCapture(dataUrl);
-      setLastCaptureInfo(
-        source === 'camera'
-          ? 'Foto taget och skickat för avläsning.'
-          : 'Foto uppladdat och skickat för avläsning.'
-      );
+      const selectedFiles =
+        source === 'gallery' && allowBatchUpload ? files : files.slice(0, 1);
+
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const file = selectedFiles[index];
+        const dataUrl = await processFileToDataUrl(file);
+        await emitCapture(dataUrl);
+        const batchText =
+          selectedFiles.length > 1 ? ` (${index + 1}/${selectedFiles.length})` : '';
+        setLastCaptureInfo(
+          source === 'camera'
+            ? `Foto taget och skickat för avläsning${batchText}.`
+            : `Foto uppladdat och skickat för avläsning${batchText}.`
+        );
+      }
     } catch (uploadError) {
       console.error(uploadError);
       setError(toUserErrorMessage(uploadError));
@@ -406,6 +416,7 @@ export function CameraCapture({
         ref={galleryInputRef}
         type='file'
         accept={IMAGE_ACCEPT}
+        multiple={allowBatchUpload}
         onChange={(event) => void handleFileChange(event, 'gallery')}
         style={{
           position: 'absolute',

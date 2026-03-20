@@ -518,6 +518,7 @@ export async function addComponentToAggregate(
       identifiedValue: payload.identifiedValue,
       assembly: payload.assembly ?? '',
       subComponent: payload.subComponent ?? '',
+      visitId: payload.visitId ?? '',
       filterListInserted
     }
   );
@@ -604,6 +605,7 @@ export async function updateComponentInAggregate(
       identifiedValue: payload.identifiedValue,
       assembly: payload.assembly ?? '',
       subComponent: payload.subComponent ?? '',
+      visitId: payload.visitId ?? '',
       changedFields,
       filterListInserted
     }

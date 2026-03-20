@@ -1,6 +1,7 @@
 ﻿import { mockObjects } from './mockData';
 import {
   AggregateRecord,
+  CreateAggregateEventPayload,
   AggregateEvent,
   ComponentAnalysis,
   CreateAggregateComponentPayload,
@@ -277,6 +278,23 @@ export async function getAggregateEvents(
   }
 
   return (await response.json()) as AggregateEvent[];
+}
+
+export async function createAggregateEvent(
+  aggregateId: string,
+  payload: CreateAggregateEventPayload
+): Promise<AggregateEvent> {
+  const response = await fetch(toApiUrl(`/api/aggregates/${aggregateId}/events`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as AggregateEvent;
 }
 
 export async function searchFilterList(
