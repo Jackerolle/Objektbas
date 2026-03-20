@@ -685,11 +685,7 @@ export default function HomePage() {
     resetAggregateDraft();
     setStartMethod(method);
     setIsAddModalOpen(false);
-    setStatus(
-      method === 'foto'
-        ? 'Startläge: fota objektskylt.'
-        : 'Startläge: lägg in manuellt (fyll i AG-systemposition och skapa aggregat).'
-    );
+    setStatus('');
   };
 
   const buildAggregatePayload = (systemId: string) => ({
@@ -1551,6 +1547,7 @@ export default function HomePage() {
   const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
   const selectedPhotoIsPreviewable = Boolean(selectedPhoto?.startsWith('data:image/'));
   const showAddWorkspace = Boolean(startMethod) || Boolean(currentAggregate);
+  const showTopStatusBanner = Boolean(status) && mode !== 'lagg-till';
 
   return (
     <main className={styles.pageRoot}>
@@ -1602,7 +1599,7 @@ export default function HomePage() {
       </header>
 
       {error && <p className={styles.errorBanner}>{error}</p>}
-      {status && <p className={styles.statusBanner}>{status}</p>}
+      {showTopStatusBanner && <p className={styles.statusBanner}>{status}</p>}
 
       {isAddModalOpen && (
         <div className={styles.modalBackdrop} onClick={() => setIsAddModalOpen(false)}>
@@ -1644,7 +1641,7 @@ export default function HomePage() {
           </section>
         ) : (
           <section className={styles.addLayout}>
-          <aside className={styles.card}>
+          <aside className={`${styles.card} ${styles.taskSidebar}`}>
             <div className={styles.cardHeader}>
               <h2>Fotopunkter</h2>
               <span className={styles.badge}>
@@ -1692,6 +1689,7 @@ export default function HomePage() {
                 <h2>Aktivt moment: {selectedTask.label}</h2>
                 {isProcessingCapture && <span className={styles.badge}>Bearbetar...</span>}
               </div>
+              {status && <p className={styles.inlineStatus}>{status}</p>}
 
               {selectedTask.id !== 'skylt' && (
                 <div className={styles.scopeGrid}>
@@ -1744,10 +1742,12 @@ export default function HomePage() {
               />
 
               {selectedPhoto && selectedPhotoIsPreviewable && (
-                <div className={styles.previewWrap}>
-                  <p>Senaste bild: {selectedTask.label}</p>
-                  <img src={selectedPhoto} alt={`Foto ${selectedTask.label}`} />
-                </div>
+                <details className={styles.previewDetails}>
+                  <summary>Senaste bild: {selectedTask.label}</summary>
+                  <div className={styles.previewWrap}>
+                    <img src={selectedPhoto} alt={`Foto ${selectedTask.label}`} />
+                  </div>
+                </details>
               )}
             </article>
 
@@ -1834,30 +1834,33 @@ export default function HomePage() {
                   </button>
                 )}
 
-                <button
-                  className={styles.manualSaveButton}
-                  onClick={handleSaveAggregateChanges}
-                  disabled={!currentAggregate || isSavingAggregate}
-                >
-                  {isSavingAggregate ? 'Sparar...' : 'Spara ändringar i aggregat'}
-                </button>
-                <button
-                  className={styles.dangerButton}
-                  onClick={() => currentAggregate && void handleDeleteAggregate(currentAggregate)}
-                  disabled={!currentAggregate || deletingAggregateId === currentAggregate.id}
-                >
-                  {deletingAggregateId === currentAggregate?.id
-                    ? 'Tar bort aggregat...'
-                    : 'Ta bort aggregat'}
-                </button>
-              </div>
+                {currentAggregate && (
+                  <>
+                    <button
+                      className={styles.manualSaveButton}
+                      onClick={handleSaveAggregateChanges}
+                      disabled={isSavingAggregate}
+                    >
+                      {isSavingAggregate ? 'Sparar...' : 'Spara ändringar i aggregat'}
+                    </button>
+                    <button
+                      className={styles.dangerButton}
+                      onClick={() => void handleDeleteAggregate(currentAggregate)}
+                      disabled={deletingAggregateId === currentAggregate.id}
+                    >
+                      {deletingAggregateId === currentAggregate.id
+                        ? 'Tar bort aggregat...'
+                        : 'Ta bort aggregat'}
+                    </button>
+                  </>
+                )}
 
-              <div className={styles.libraryHint}>
-                <strong>Regel i flödet:</strong>
-                <p>
-                  Endast objektskylt är obligatorisk. När aggregatet finns kan du
-                  återkomma senare, uppdatera metadata och lägga till/ändra komponenter.
-                </p>
+                <button
+                  className={styles.inlineButton}
+                  onClick={() => setShowManualPanel((current) => !current)}
+                >
+                  {showManualPanel ? 'Dölj manuell inmatning' : 'Manuell inmatning'}
+                </button>
               </div>
             </article>
 
@@ -1989,120 +1992,112 @@ export default function HomePage() {
                   </div>
                 </div>
               ) : (
-                <p className={styles.emptyState}>
-                  Ta en komponentbild från fotopunkterna så hamnar avläsningen här för kontroll
-                  innan sparning.
-                </p>
+                <div className={styles.emptyStateWrap}>
+                  <p className={styles.emptyState}>
+                    Ta en komponentbild från fotopunkterna så hamnar avläsningen här för kontroll innan sparning.
+                  </p>
+                  {!showManualPanel && (
+                    <button className={styles.inlineButton} onClick={() => setShowManualPanel(true)}>
+                      Öppna manuell inmatning
+                    </button>
+                  )}
+                </div>
               )}
             </article>
 
-            <article className={styles.card}>
-              <div className={styles.cardHeader}>
-                <h2>Manuell registrering</h2>
-                <span className={styles.badge}>Valfri</span>
-                <span style={{ display: 'none' }}>Manuell registrering (fallback)</span>
-              </div>
-
-              {!showManualPanel ? (
-                <div className={styles.libraryHint}>
-                  <strong>Behöver du mata in manuellt?</strong>
-                  <p>
-                    Öppna manuellt läge vid svårläst bild eller när du vill lägga in data utan
-                    foto.
-                  </p>
-                  <button className={styles.inlineButton} onClick={() => setShowManualPanel(true)}>
-                    Öppna manuell registrering
+            {showManualPanel && (
+              <article className={`${styles.card} ${styles.manualPanelCard}`}>
+                <div className={styles.cardHeader}>
+                  <h2>Manuell registrering</h2>
+                  <span style={{ display: 'none' }}>Manuell registrering (fallback)</span>
+                  <button
+                    className={styles.inlineButton}
+                    onClick={() => setShowManualPanel(false)}
+                    disabled={isSavingManual}
+                  >
+                    Stäng
                   </button>
                 </div>
-              ) : (
-                <>
-              <div className={styles.manualGrid}>
-                <label>
-                  Huvudkategori
-                  <select
-                    value={manualAssembly}
-                    onChange={(event) =>
-                      handleManualAssemblyChange(event.target.value as AssemblyOption)
-                    }
-                  >
-                    {ASSEMBLY_OPTIONS.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
 
-                <label>
-                  Underkategori
-                  <select
-                    value={manualSubComponent}
-                    onChange={(event) => handleManualSubComponentChange(event.target.value)}
-                  >
-                    {manualSubComponentSuggestions.map((option) => (
-                      <option key={`${manualAssembly}-${option}`} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {manualAllowsMultiple && (
-                  <label className={styles.fullRow}>
-                    Flera poster (en per rad)
-                    <textarea
-                      value={manualExtraValues}
-                      onChange={(event) => setManualExtraValues(event.target.value)}
-                      placeholder={'Exempel: Filter 2\nFilter 3'}
-                    />
-                  </label>
-                )}
-
-                {manualFieldConfig.map((field) => (
-                  <label key={field.key}>
-                    {field.label}
-                    <input
-                      value={manualAttributes[field.key] ?? ''}
+                <div className={styles.manualGrid}>
+                  <label>
+                    Huvudkategori
+                    <select
+                      value={manualAssembly}
                       onChange={(event) =>
-                        setManualAttributes((current) => ({
-                          ...current,
-                          [field.key]: event.target.value
-                        }))
+                        handleManualAssemblyChange(event.target.value as AssemblyOption)
                       }
-                      placeholder={field.placeholder}
+                    >
+                      {ASSEMBLY_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Underkategori
+                    <select
+                      value={manualSubComponent}
+                      onChange={(event) => handleManualSubComponentChange(event.target.value)}
+                    >
+                      {manualSubComponentSuggestions.map((option) => (
+                        <option key={`${manualAssembly}-${option}`} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {manualAllowsMultiple && (
+                    <label className={styles.fullRow}>
+                      Flera poster (en per rad)
+                      <textarea
+                        value={manualExtraValues}
+                        onChange={(event) => setManualExtraValues(event.target.value)}
+                        placeholder={'Exempel: Filter 2\nFilter 3'}
+                      />
+                    </label>
+                  )}
+
+                  {manualFieldConfig.map((field) => (
+                    <label key={field.key}>
+                      {field.label}
+                      <input
+                        value={manualAttributes[field.key] ?? ''}
+                        onChange={(event) =>
+                          setManualAttributes((current) => ({
+                            ...current,
+                            [field.key]: event.target.value
+                          }))
+                        }
+                        placeholder={field.placeholder}
+                      />
+                    </label>
+                  ))}
+
+                  <label className={styles.fullRow}>
+                    Notering
+                    <textarea
+                      value={manualNotes}
+                      onChange={(event) => setManualNotes(event.target.value)}
+                      placeholder='Exempel: OCR misslyckades, värde kontrollerat manuellt.'
                     />
                   </label>
-                ))}
+                </div>
 
-                <label className={styles.fullRow}>
-                  Notering
-                  <textarea
-                    value={manualNotes}
-                    onChange={(event) => setManualNotes(event.target.value)}
-                    placeholder='Exempel: OCR misslyckades, värde kontrollerat manuellt.'
-                  />
-                </label>
-              </div>
-
-                  <div className={styles.inlineEditActions}>
-                    <button
-                      className={styles.manualSaveButton}
-                      onClick={handleManualSave}
-                      disabled={!aggregateReady || isSavingManual}
-                    >
-                      {isSavingManual ? 'Sparar...' : 'Spara manuell post'}
-                    </button>
-                    <button
-                      className={styles.inlineButton}
-                      onClick={() => setShowManualPanel(false)}
-                      disabled={isSavingManual}
-                    >
-                      Dölj manuell registrering
-                    </button>
-                  </div>
-                </>
-              )}
-            </article>
+                <div className={styles.inlineEditActions}>
+                  <button
+                    className={styles.manualSaveButton}
+                    onClick={handleManualSave}
+                    disabled={!aggregateReady || isSavingManual}
+                  >
+                    {isSavingManual ? 'Sparar...' : 'Spara manuell post'}
+                  </button>
+                </div>
+              </article>
+            )}
 
             <article className={styles.card}>
               <div className={styles.cardHeader}>

@@ -99,6 +99,16 @@
   border-color: rgba(96, 165, 250, 0.48);
 }
 
+.inlineStatus {
+  margin: 0 0 0.7rem;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  background: rgba(30, 64, 175, 0.16);
+  color: #dbeafe;
+  font-size: 0.84rem;
+}
+
 .modalBackdrop {
   position: fixed;
   inset: 0;
@@ -151,10 +161,15 @@
   align-items: start;
 }
 
+.taskSidebar {
+  position: sticky;
+  top: 0.8rem;
+}
+
 .workspace {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .card {
@@ -310,16 +325,28 @@
   background: rgba(2, 6, 23, 0.6);
 }
 
-.previewWrap p {
-  margin: 0 0 0.45rem;
+.previewDetails {
+  margin-top: 0.7rem;
+}
+
+.previewDetails summary {
+  cursor: pointer;
   color: #cbd5e1;
   font-size: 0.82rem;
+  user-select: none;
 }
 
 .previewWrap img {
   width: 100%;
   border-radius: 0.65rem;
   border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.emptyStateWrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
 }
 
 .scopeGrid {
@@ -448,6 +475,11 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.55rem;
+}
+
+.manualPanelCard {
+  border-color: rgba(34, 211, 238, 0.36);
+  background: linear-gradient(170deg, rgba(20, 40, 52, 0.9), rgba(12, 18, 24, 0.95));
 }
 
 .dangerButton {
@@ -917,8 +949,8 @@
     grid-template-columns: 1fr;
   }
 
-  .workspace {
-    grid-template-columns: 1fr;
+  .taskSidebar {
+    position: static;
   }
 }
 
