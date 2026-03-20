@@ -1551,8 +1551,6 @@ export default function HomePage() {
   const selectedPhoto = capturedPhotos[selectedTask.id] ?? null;
   const selectedPhotoIsPreviewable = Boolean(selectedPhoto?.startsWith('data:image/'));
   const showAddWorkspace = Boolean(startMethod) || Boolean(currentAggregate);
-  const showManualSkyltStart =
-    selectedTask.id === 'skylt' && startMethod === 'manuell' && !aggregateReady;
 
   return (
     <main className={styles.pageRoot}>
@@ -1728,45 +1726,22 @@ export default function HomePage() {
                 </div>
               )}
 
-              {showManualSkyltStart ? (
-                <div className={styles.libraryHint}>
-                  <strong>Manuell start</strong>
-                  <p>Fyll i Systemposition i aggregatramen och skapa aggregatet manuellt.</p>
-                  <div className={styles.quickStartActions}>
-                    <button
-                      className={styles.manualSaveButton}
-                      onClick={() => void handleCreateAggregateManually()}
-                      disabled={isSavingAggregate || isProcessingCapture}
-                    >
-                      {isSavingAggregate ? 'Skapar...' : 'Lägg till manuellt'}
-                    </button>
-                    <button
-                      className={styles.inlineButton}
-                      onClick={() => setStartMethod('foto')}
-                      disabled={isSavingAggregate || isProcessingCapture}
-                    >
-                      Byt till foto
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <CameraCapture
-                  onCapture={handleCapture}
-                  onRegisterCameraTrigger={(trigger) => {
-                    cameraTriggerRef.current = trigger;
-                  }}
-                  title={`Fotografera ${selectedTask.label.toLowerCase()}`}
-                  subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
-                  captureLabel='Ta foto med enhet'
-                  uploadLabel='Ladda upp foto'
+              <CameraCapture
+                onCapture={handleCapture}
+                onRegisterCameraTrigger={(trigger) => {
+                  cameraTriggerRef.current = trigger;
+                }}
+                title={`Fotografera ${selectedTask.label.toLowerCase()}`}
+                subtitle={selectedTask.id === 'skylt' ? 'Steg 1: obligatoriskt' : 'Komponentfoto'}
+                captureLabel='Ta foto med enhet'
+                uploadLabel='Ladda upp foto'
                 helperText={
                   selectedTask.id === 'skylt'
-                    ? 'Skapar aggregat första gången, eller uppdaterar befintligt aggregat. Bilden sparas lokalt på enheten.'
-                    : 'Sparas i befintligt aggregat med vald huvudkategori/underkategori. Flera komponenter av samma typ stöds. Bilden sparas lokalt på enheten.'
+                    ? 'Objektskylt först. Du kan skapa aggregat manuellt i Aggregatram.'
+                    : 'Ta foto, kontrollera utkastet och spara komponenten.'
                 }
-                  disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
-                />
-              )}
+                disabled={isProcessingCapture || (!aggregateReady && selectedTask.id !== 'skylt')}
+              />
 
               {selectedPhoto && selectedPhotoIsPreviewable && (
                 <div className={styles.previewWrap}>
@@ -1849,6 +1824,16 @@ export default function HomePage() {
               </div>
 
               <div className={styles.aggregateActions}>
+                {!currentAggregate && (
+                  <button
+                    className={styles.manualSaveButton}
+                    onClick={() => void handleCreateAggregateManually()}
+                    disabled={isSavingAggregate || isProcessingCapture}
+                  >
+                    {isSavingAggregate ? 'Skapar...' : 'Skapa aggregat manuellt'}
+                  </button>
+                )}
+
                 <button
                   className={styles.manualSaveButton}
                   onClick={handleSaveAggregateChanges}
