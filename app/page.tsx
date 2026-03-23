@@ -28,6 +28,7 @@ import {
   loadAggregateLocalPhotos,
   saveAggregateLocalPhoto
 } from '@/lib/localPhotoStore';
+import { analyzeSystemPositionLocally } from '@/lib/client/freeOcr';
 import {
   AggregateEvent,
   AggregateRecord,
@@ -273,6 +274,41 @@ function extractSystemPositionCandidateFromNotes(value: string | undefined): str
   }
 
   return '';
+}
+
+function scoreSystemAnalysis(analysis: SystemPositionAnalysis): number {
+  const normalizedId = normalizeSystemPositionId(analysis.systemPositionId);
+  let score = clampDraftConfidence(analysis.confidence) * 100;
+
+  if (isUsableDetectedSystemPositionId(normalizedId)) {
+    score += 42;
+  } else {
+    score -= 35;
+  }
+
+  if (/^\d{3}(AG|FL|SE)\d{3,4}$/.test(normalizedId)) {
+    score += 6;
+  }
+
+  if (normalizedId.length === 9) {
+    score -= 1.2;
+  }
+
+  if (analysis.provider?.includes('local-tesseract-idline')) {
+    score += 3;
+  }
+
+  if (/kunde inte|manuell|fallback/i.test(analysis.notes ?? '')) {
+    score -= 8;
+  }
+
+  return score;
+}
+
+function chooseBestSystemAnalysis(candidates: SystemPositionAnalysis[]): SystemPositionAnalysis {
+  const ranked = [...candidates];
+  ranked.sort((a, b) => scoreSystemAnalysis(b) - scoreSystemAnalysis(a));
+  return ranked[0];
 }
 
 function getDefaultScopeForTask(task: CaptureTask): {
@@ -1067,30 +1103,54 @@ export default function HomePage() {
 
     try {
       if (task.id === 'skylt') {
-        setStatus('Bild mottagen. Laser objektskylt med lokal OCR...');
-        let analysis: SystemPositionAnalysis;
+        setStatus('Bild mottagen. Läser objektskylt med AI + lokal OCR...');
+        const analysisCandidates: SystemPositionAnalysis[] = [];
+        const diagnostics: string[] = [];
 
-        try {
-          analysis = await analyzeSystemPosition(imageDataUrl);
-        } catch (analysisError) {
-          analysis = {
+        const [serverAnalysis, localAnalysis] = await Promise.allSettled([
+          analyzeSystemPosition(imageDataUrl),
+          analyzeSystemPositionLocally(imageDataUrl)
+        ]);
+
+        if (serverAnalysis.status === 'fulfilled') {
+          analysisCandidates.push(serverAnalysis.value);
+        } else {
+          diagnostics.push(`Server-OCR: ${String(serverAnalysis.reason).slice(0, 120)}`);
+        }
+
+        if (localAnalysis.status === 'fulfilled') {
+          analysisCandidates.push(localAnalysis.value);
+        } else {
+          diagnostics.push(`Lokal OCR: ${String(localAnalysis.reason).slice(0, 120)}`);
+        }
+
+        if (!analysisCandidates.length) {
+          analysisCandidates.push({
             systemPositionId: 'MANUELL-KRAVS',
             confidence: 0.1,
-            notes: `OCR-analys misslyckades: ${String(analysisError).slice(0, 120)}`,
+            notes: diagnostics.join(' | ') || 'Ingen OCR-källa gav resultat.',
             provider: 'fallback',
             requiresManualConfirmation: true
-          };
+          });
         }
+
+        const analysis = chooseBestSystemAnalysis(analysisCandidates);
 
         const aiId = normalizeSystemPositionId(analysis.systemPositionId);
         const noteId = extractSystemPositionCandidateFromNotes(analysis.notes);
+        const secondaryCandidate =
+          analysisCandidates
+            .filter((candidate) => candidate !== analysis)
+            .map((candidate) => normalizeSystemPositionId(candidate.systemPositionId))
+            .find((candidate) => isUsableDetectedSystemPositionId(candidate)) ?? '';
         const manualId = normalizeSystemPositionId(systemPositionId);
         const aiIdIsUsable = isUsableDetectedSystemPositionId(aiId);
         const noteIdIsUsable = isUsableDetectedSystemPositionId(noteId);
-        const highConfidenceAi = aiIdIsUsable && analysis.confidence >= 0.35;
+        const highConfidenceAi = aiIdIsUsable && analysis.confidence >= 0.4;
         const resolvedId = highConfidenceAi
           ? aiId
-          : manualId || (aiIdIsUsable ? aiId : noteIdIsUsable ? noteId : '');
+          : manualId ||
+            (aiIdIsUsable ? aiId : noteIdIsUsable ? noteId : secondaryCandidate || '');
 
         if (!resolvedId) {
           const reason = analysis.notes?.trim()
@@ -1122,21 +1182,25 @@ export default function HomePage() {
 
         const analysisNote = analysis.notes?.trim() ? ` ${analysis.notes.trim()}` : '';
         const providerText = analysis.provider ? ` [${analysis.provider}]` : '';
+        const secondaryText =
+          secondaryCandidate && secondaryCandidate !== resolvedId
+            ? ` Reservkandidat: ${secondaryCandidate}.`
+            : '';
         const usedManual = Boolean(manualId) && resolvedId === manualId && !highConfidenceAi;
         const usedLowConfidenceAi = resolvedId === aiId && aiIdIsUsable && !highConfidenceAi;
         const usedNoteFallback = resolvedId === noteId && noteIdIsUsable && !highConfidenceAi;
         setStatus(
           usedManual
-            ? `Objektskylt sparad med manuellt ID ${resolvedId}.${providerText}${analysisNote}`
+            ? `Objektskylt sparad med manuellt ID ${resolvedId}.${providerText}${secondaryText}${analysisNote}`
             : usedLowConfidenceAi
               ? `Objektskylt tolkad med lagre sakerhet (${toPercent(
                   analysis.confidence
-                )}) och sparad som ${resolvedId}.${providerText} Bekrafta ID.${analysisNote}`
+                )}) och sparad som ${resolvedId}.${providerText}${secondaryText} Bekrafta ID.${analysisNote}`
             : usedNoteFallback
-              ? `Objektskylt sparad med OCR-kandidat ${resolvedId}.${providerText} Bekrafta ID manuellt.${analysisNote}`
+              ? `Objektskylt sparad med OCR-kandidat ${resolvedId}.${providerText}${secondaryText} Bekrafta ID manuellt.${analysisNote}`
             : `Objektskylt tolkad (${toPercent(
                 analysis.confidence
-              )}) och aggregat sparat.${providerText} Fortsätt med komponentfoton.${analysisNote}`
+              )}) och aggregat sparat.${providerText}${secondaryText} Fortsätt med komponentfoton.${analysisNote}`
         );
         return;
       }

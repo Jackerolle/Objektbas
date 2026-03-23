@@ -7,6 +7,7 @@ type OcrEngine =
   | 'tesseract-raw'
   | 'tesseract-contrast'
   | 'tesseract-focus'
+  | 'tesseract-idline'
   | 'fallback';
 
 type OcrScanResult = {
@@ -35,6 +36,7 @@ const SYSTEM_ID_BLACKLIST = new Set([
   'NA'
 ]);
 const SYSTEM_ID_PATTERN = /^\d{3}[A-Z]{2}\d{3,4}$/;
+const KNOWN_SYSTEM_MIDDLES = new Set(['AG', 'FL', 'SE']);
 
 type Variant = { value: string; penalty: number };
 
@@ -93,8 +95,11 @@ function scoreSystemIdCandidate(value: string): number {
   if (/^[0-9]{3,4}$/.test(suffix)) {
     score += 6;
   }
+  if (KNOWN_SYSTEM_MIDDLES.has(middle)) {
+    score += 3;
+  }
   if (suffix.length === 4) {
-    score += 1;
+    score -= 0.6;
   }
 
   return score;
@@ -467,6 +472,63 @@ async function createFocusedPlateDataUrl(dataUrl: string): Promise<string> {
   return focusedCanvas.toDataURL('image/jpeg', 0.95);
 }
 
+async function createIdLineDataUrl(dataUrl: string): Promise<string> {
+  const image = await loadImage(dataUrl);
+  const bounds = fitWithinBounds(
+    image.naturalWidth || image.width,
+    image.naturalHeight || image.height,
+    2800
+  );
+
+  const canvas = document.createElement('canvas');
+  canvas.width = bounds.width;
+  canvas.height = bounds.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('Canvas saknas for id-rad OCR.');
+  }
+
+  ctx.drawImage(image, 0, 0, bounds.width, bounds.height);
+
+  const cropX = Math.round(bounds.width * 0.1);
+  const cropY = Math.round(bounds.height * 0.54);
+  const cropW = Math.round(bounds.width * 0.8);
+  const cropH = Math.round(bounds.height * 0.22);
+
+  const idCanvas = document.createElement('canvas');
+  idCanvas.width = Math.max(1, Math.round(cropW * 2.2));
+  idCanvas.height = Math.max(1, Math.round(cropH * 2.2));
+  const idCtx = idCanvas.getContext('2d');
+  if (!idCtx) {
+    throw new Error('Canvas saknas for id-rad OCR.');
+  }
+
+  idCtx.drawImage(
+    canvas,
+    cropX,
+    cropY,
+    cropW,
+    cropH,
+    0,
+    0,
+    idCanvas.width,
+    idCanvas.height
+  );
+
+  const frame = idCtx.getImageData(0, 0, idCanvas.width, idCanvas.height);
+  const pixels = frame.data;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const gray = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+    const boosted = gray > 165 ? 255 : 0;
+    pixels[i] = boosted;
+    pixels[i + 1] = boosted;
+    pixels[i + 2] = boosted;
+  }
+  idCtx.putImageData(frame, 0, 0);
+
+  return idCanvas.toDataURL('image/jpeg', 0.96);
+}
+
 async function recognizeWithTextDetector(blob: Blob): Promise<OcrScanResult> {
   if (typeof window === 'undefined' || typeof createImageBitmap !== 'function') {
     return {
@@ -580,8 +642,19 @@ function withSystemCandidate(scan: OcrScanResult): OcrScanResult {
 
 function chooseBestSystemIdScan(scans: OcrScanResult[]): OcrScanResult {
   const ranked = scans.map(withSystemCandidate);
+  const engineBonus: Partial<Record<OcrEngine, number>> = {
+    'tesseract-idline': 0.16,
+    'tesseract-focus': 0.1,
+    'tesseract-contrast': 0.07,
+    'text-detector': 0.04
+  };
+
   ranked.sort((a, b) => {
-    const scoreDiff = (b.candidateScore ?? -1) - (a.candidateScore ?? -1);
+    const adjustedA =
+      (a.candidateScore ?? -1) + a.confidence * 7 + (engineBonus[a.engine] ?? 0);
+    const adjustedB =
+      (b.candidateScore ?? -1) + b.confidence * 7 + (engineBonus[b.engine] ?? 0);
+    const scoreDiff = adjustedB - adjustedA;
     if (scoreDiff !== 0) {
       return scoreDiff;
     }
@@ -660,6 +733,17 @@ async function runLocalOcr(
     }
   } catch (error) {
     diagnostics.push(`Fokus-OCR-fel: ${String(error).slice(0, 120)}`);
+  }
+
+  try {
+    const idLine = await createIdLineDataUrl(imageDataUrl);
+    const idLineResult = await recognizeWithTesseract(idLine, 'tesseract-idline');
+    diagnostics.push(...idLineResult.diagnostics);
+    if (idLineResult.text) {
+      scans.push(idLineResult);
+    }
+  } catch (error) {
+    diagnostics.push(`ID-rad-OCR-fel: ${String(error).slice(0, 120)}`);
   }
 
   if (scans.length > 0) {
