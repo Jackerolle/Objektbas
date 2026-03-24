@@ -162,6 +162,97 @@ function setValueIfPresent(
   setValueByAliases(data, aliases, fallbackKey, value);
 }
 
+function setValueIfMissingByAliases(
+  data: Record<string, string>,
+  aliases: string[],
+  fallbackKey: string,
+  value: string
+) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return;
+  }
+
+  const key = findKeyByAliases(data, aliases) ?? fallbackKey;
+  if ((data[key] ?? '').trim()) {
+    return;
+  }
+
+  data[key] = normalized;
+}
+
+type FilterRowValues = {
+  obNumber: string;
+  systemPosition: string;
+  filterName: string;
+  filterClass: string;
+  dimension: string;
+  antal: string;
+  placering: string;
+  intervall: string;
+  notes: string;
+  category: string;
+  subCategory: string;
+  componentType: string;
+  materialbeteckning: string;
+  dinairArtikel: string;
+  tagg: string;
+  status: string;
+  sourceTag: string;
+  department: string;
+};
+
+function extractFilterRowValues(data: Record<string, string>): FilterRowValues {
+  return {
+    obNumber: findValueByAliases(data, OB_KEY_ALIASES),
+    systemPosition: findValueByAliases(data, SYSTEMPOSITION_KEY_ALIASES),
+    filterName: findValueByAliases(data, FILTER_KEY_ALIASES),
+    filterClass: findValueByAliases(data, KLASS_KEY_ALIASES),
+    dimension: findValueByAliases(data, DIMENSION_KEY_ALIASES),
+    antal: findValueByAliases(data, ANTAL_KEY_ALIASES),
+    placering: findValueByAliases(data, PLACERING_KEY_ALIASES),
+    intervall: findValueByAliases(data, INTERVALL_KEY_ALIASES),
+    notes: findValueByAliases(data, NOTES_KEY_ALIASES),
+    category: findValueByAliases(data, CATEGORY_KEY_ALIASES),
+    subCategory: findValueByAliases(data, SUBCATEGORY_KEY_ALIASES),
+    componentType: findValueByAliases(data, COMPONENTTYPE_KEY_ALIASES),
+    materialbeteckning: findValueByAliases(data, MATERIALBETECKNING_KEY_ALIASES),
+    dinairArtikel: findValueByAliases(data, DINAIR_ARTIKEL_KEY_ALIASES),
+    tagg: findValueByAliases(data, TAGG_KEY_ALIASES),
+    status: findValueByAliases(data, STATUS_KEY_ALIASES),
+    sourceTag: findValueByAliases(data, SOURCE_KEY_ALIASES),
+    department: findValueByAliases(data, ['avdelning', 'department'])
+  };
+}
+
+function applyFilterRowValues(
+  data: Record<string, string>,
+  values: FilterRowValues,
+  mode: 'overwrite' | 'fill-missing'
+) {
+  const setValue =
+    mode === 'overwrite' ? setValueIfPresent : setValueIfMissingByAliases;
+
+  setValue(data, OB_KEY_ALIASES, 'OB-nummer', values.obNumber);
+  setValue(data, SYSTEMPOSITION_KEY_ALIASES, 'Systemposition', values.systemPosition);
+  setValue(data, FILTER_KEY_ALIASES, 'Filter', values.filterName);
+  setValue(data, KLASS_KEY_ALIASES, 'Filterklass', values.filterClass);
+  setValue(data, DIMENSION_KEY_ALIASES, 'Dimension', values.dimension);
+  setValue(data, ANTAL_KEY_ALIASES, 'Antal', values.antal);
+  setValue(data, PLACERING_KEY_ALIASES, 'Placering', values.placering);
+  setValue(data, INTERVALL_KEY_ALIASES, 'Bytesintervall', values.intervall);
+  setValue(data, NOTES_KEY_ALIASES, 'Notering', values.notes);
+  setValue(data, CATEGORY_KEY_ALIASES, 'Huvudkategori', values.category);
+  setValue(data, SUBCATEGORY_KEY_ALIASES, 'Underkategori', values.subCategory);
+  setValue(data, COMPONENTTYPE_KEY_ALIASES, 'Komponenttyp', values.componentType);
+  setValue(data, MATERIALBETECKNING_KEY_ALIASES, 'Materialbeteckning', values.materialbeteckning);
+  setValue(data, DINAIR_ARTIKEL_KEY_ALIASES, 'DINAIR artikel', values.dinairArtikel);
+  setValue(data, TAGG_KEY_ALIASES, 'Tagg', values.tagg);
+  setValue(data, STATUS_KEY_ALIASES, 'status', values.status);
+  setValue(data, SOURCE_KEY_ALIASES, 'Skapad via', values.sourceTag);
+  setValue(data, ['avdelning', 'department'], 'Avdelning', values.department);
+}
+
 function toStringRecord(value: Record<string, unknown> | null): Record<string, string> {
   if (!value) {
     return {};
@@ -527,6 +618,220 @@ export async function ensureFilterComponentInFilterList(
 
   assertNoError(insertError);
   return true;
+}
+
+export type RepairAutoFilterRowsResult = {
+  scannedRows: number;
+  autoRows: number;
+  mergedIntoExistingRows: number;
+  normalizedRows: number;
+  deletedAutoRows: number;
+  skippedRows: number;
+};
+
+type RepairRow = {
+  id: string;
+  sourceFileName: string | null;
+  rowNumber: number;
+  searchText: string;
+  data: Record<string, string>;
+  values: FilterRowValues;
+  obToken: string;
+  filterSignature: string;
+};
+
+function toRepairRow(row: {
+  id: string;
+  source_file_name: string | null;
+  row_number: number;
+  search_text: string;
+  data: Record<string, unknown> | null;
+}): RepairRow {
+  const data = toStringRecord(row.data);
+  const values = extractFilterRowValues(data);
+  const obToken = normalizeToken(values.obNumber || values.systemPosition);
+  const filterName = values.filterName || values.materialbeteckning;
+  const inferredType = values.componentType || inferFilterComponentType(filterName);
+  const filterSignature = buildFilterSignature(
+    inferredType,
+    filterName,
+    values.dimension,
+    values.filterClass
+  );
+
+  return {
+    id: row.id,
+    sourceFileName: row.source_file_name,
+    rowNumber: row.row_number,
+    searchText: row.search_text,
+    data,
+    values,
+    obToken,
+    filterSignature
+  };
+}
+
+function refreshRepairRow(row: RepairRow) {
+  row.values = extractFilterRowValues(row.data);
+  row.obToken = normalizeToken(row.values.obNumber || row.values.systemPosition);
+  const filterName = row.values.filterName || row.values.materialbeteckning;
+  const inferredType = row.values.componentType || inferFilterComponentType(filterName);
+  row.filterSignature = buildFilterSignature(
+    inferredType,
+    filterName,
+    row.values.dimension,
+    row.values.filterClass
+  );
+  row.searchText = buildSearchText(row.data);
+}
+
+function isAutoRow(row: RepairRow): boolean {
+  const sourceToken = normalizeToken(row.sourceFileName ?? '');
+  if (sourceToken.startsWith('auto') || sourceToken.includes('franapp')) {
+    return true;
+  }
+
+  const createdViaToken = normalizeToken(row.values.sourceTag);
+  return createdViaToken.includes('appauto');
+}
+
+function hasMeaningfulFilter(row: RepairRow): boolean {
+  const filterName = (row.values.filterName || row.values.materialbeteckning).trim();
+  return Boolean(filterName);
+}
+
+function cloneEmptyTemplate(data: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.keys(data).map((key) => [key, '']));
+}
+
+export async function repairAutoFilterRows(): Promise<RepairAutoFilterRowsResult> {
+  const supabase = getSupabaseServerClient();
+
+  const { data: rows, error } = await supabase
+    .from('ventilation_filter_list_rows')
+    .select('id, source_file_name, row_number, search_text, data')
+    .order('row_number', { ascending: true })
+    .limit(20000);
+
+  assertNoError(error);
+
+  const parsed = ((rows ?? []) as Array<{
+    id: string;
+    source_file_name: string | null;
+    row_number: number;
+    search_text: string;
+    data: Record<string, unknown> | null;
+  }>).map(toRepairRow);
+
+  const canonicalRows = parsed.filter((row) => !isAutoRow(row));
+  const autoRows = parsed.filter((row) => isAutoRow(row));
+  const canonicalByOb = new Map<string, RepairRow[]>();
+
+  for (const row of canonicalRows) {
+    if (!row.obToken) {
+      continue;
+    }
+    const bucket = canonicalByOb.get(row.obToken) ?? [];
+    bucket.push(row);
+    canonicalByOb.set(row.obToken, bucket);
+  }
+
+  const fallbackTemplate = canonicalRows[0]?.data ?? {};
+
+  let mergedIntoExistingRows = 0;
+  let normalizedRows = 0;
+  let deletedAutoRows = 0;
+  let skippedRows = 0;
+
+  for (const autoRow of autoRows) {
+    if (!autoRow.obToken || !hasMeaningfulFilter(autoRow)) {
+      skippedRows += 1;
+      continue;
+    }
+
+    const sameObRows = canonicalByOb.get(autoRow.obToken) ?? [];
+    const exactMatch = sameObRows.find(
+      (row) => row.filterSignature === autoRow.filterSignature && hasMeaningfulFilter(row)
+    );
+    const emptyTarget = sameObRows.find((row) => !hasMeaningfulFilter(row));
+    const mergeTarget = exactMatch ?? emptyTarget ?? null;
+
+    if (mergeTarget) {
+      const merged = { ...mergeTarget.data };
+      applyFilterRowValues(merged, autoRow.values, 'fill-missing');
+      const nextSearchText = buildSearchText(merged);
+      const dataChanged = JSON.stringify(merged) !== JSON.stringify(mergeTarget.data);
+      const searchChanged = nextSearchText !== mergeTarget.searchText;
+
+      if (dataChanged || searchChanged) {
+        const { error: updateError } = await supabase
+          .from('ventilation_filter_list_rows')
+          .update({
+            data: merged,
+            search_text: nextSearchText
+          })
+          .eq('id', mergeTarget.id);
+        assertNoError(updateError);
+        mergeTarget.data = merged;
+        refreshRepairRow(mergeTarget);
+      }
+
+      const { error: deleteError } = await supabase
+        .from('ventilation_filter_list_rows')
+        .delete()
+        .eq('id', autoRow.id);
+      assertNoError(deleteError);
+
+      mergedIntoExistingRows += 1;
+      deletedAutoRows += 1;
+      continue;
+    }
+
+    const template =
+      sameObRows[0]?.data ??
+      (Object.keys(fallbackTemplate).length ? fallbackTemplate : autoRow.data);
+    const normalized = cloneEmptyTemplate(template);
+    applyFilterRowValues(normalized, autoRow.values, 'overwrite');
+    const normalizedSearchText = buildSearchText(normalized);
+    const targetSource = sameObRows[0]?.sourceFileName ?? autoRow.sourceFileName;
+
+    const dataChanged = JSON.stringify(normalized) !== JSON.stringify(autoRow.data);
+    const searchChanged = normalizedSearchText !== autoRow.searchText;
+    const sourceChanged = targetSource !== autoRow.sourceFileName;
+
+    if (dataChanged || searchChanged || sourceChanged) {
+      const { error: updateError } = await supabase
+        .from('ventilation_filter_list_rows')
+        .update({
+          source_file_name: targetSource,
+          data: normalized,
+          search_text: normalizedSearchText
+        })
+        .eq('id', autoRow.id);
+      assertNoError(updateError);
+    }
+
+    autoRow.data = normalized;
+    autoRow.sourceFileName = targetSource;
+    refreshRepairRow(autoRow);
+
+    if (autoRow.obToken) {
+      const bucket = canonicalByOb.get(autoRow.obToken) ?? [];
+      bucket.push(autoRow);
+      canonicalByOb.set(autoRow.obToken, bucket);
+    }
+
+    normalizedRows += 1;
+  }
+
+  return {
+    scannedRows: parsed.length,
+    autoRows: autoRows.length,
+    mergedIntoExistingRows,
+    normalizedRows,
+    deletedAutoRows,
+    skippedRows
+  };
 }
 
 type SyncFilterListResult = {

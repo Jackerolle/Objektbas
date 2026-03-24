@@ -335,3 +335,31 @@ export async function importFilterListFile(
 
   return (await response.json()) as ImportFilterListResult;
 }
+
+export async function repairFilterListAutoRows(): Promise<{
+  scannedRows: number;
+  autoRows: number;
+  mergedIntoExistingRows: number;
+  normalizedRows: number;
+  deletedAutoRows: number;
+  skippedRows: number;
+}> {
+  const response = await fetch(toApiUrl('/api/filterlist'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as {
+    scannedRows: number;
+    autoRows: number;
+    mergedIntoExistingRows: number;
+    normalizedRows: number;
+    deletedAutoRows: number;
+    skippedRows: number;
+  };
+}

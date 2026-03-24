@@ -12,6 +12,7 @@ import {
   deleteAggregateComponent,
   getAggregateEvents,
   importFilterListFile,
+  repairFilterListAutoRows,
   searchAggregates,
   searchFilterList,
   updateAggregateComponent,
@@ -631,6 +632,7 @@ export default function HomePage() {
   const [filteredFilterRows, setFilteredFilterRows] = useState(0);
   const [isLoadingFilterList, setIsLoadingFilterList] = useState(false);
   const [isImportingFilterList, setIsImportingFilterList] = useState(false);
+  const [isRepairingFilterList, setIsRepairingFilterList] = useState(false);
 
   const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -1502,6 +1504,23 @@ export default function HomePage() {
       setError(`Kunde inte slutföra dubletthantering: ${String(saveError)}`);
     } finally {
       setIsResolvingDuplicate(false);
+    }
+  };
+
+  const handleRepairFilterListAutoRows = async () => {
+    clearFeedback();
+    setIsRepairingFilterList(true);
+
+    try {
+      const result = await repairFilterListAutoRows();
+      setStatus(
+        `Filterlista städad. Auto-rader: ${result.autoRows}, merge: ${result.mergedIntoExistingRows}, normaliserade: ${result.normalizedRows}, borttagna dubletter: ${result.deletedAutoRows}, hoppade över: ${result.skippedRows}.`
+      );
+      await handleLoadFilterList(filterQuery);
+    } catch (repairError) {
+      setError(`Kunde inte stada auto-rader: ${String(repairError)}`);
+    } finally {
+      setIsRepairingFilterList(false);
     }
   };
 
@@ -3345,6 +3364,13 @@ export default function HomePage() {
                 disabled={!filterFile || isImportingFilterList}
               >
                 {isImportingFilterList ? 'Importerar...' : 'Importera filterlista'}
+              </button>
+              <button
+                className={styles.inlineButton}
+                onClick={() => void handleRepairFilterListAutoRows()}
+                disabled={isRepairingFilterList || isImportingFilterList || isLoadingFilterList}
+              >
+                {isRepairingFilterList ? 'Stadar...' : 'Stada auto-rader'}
               </button>
             </div>
           </div>
