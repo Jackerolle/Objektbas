@@ -139,3 +139,48 @@ export type ImportPreviewResult = {
   warnings: string[];
   previewAggregates: ImportPreviewAggregate[];
 };
+
+export type CreateAggregateEventPayload = {
+  aggregateId?: string;
+  eventType: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type AggregateEvent = {
+  id: string;
+  aggregateId: string;
+  eventType: string;
+  message: string;
+  metadata: Record<string, string>;
+  createdAt: string;
+};
+
+export type FilterListRow = {
+  id: string;
+  rowNumber: number;
+  sourceFileName?: string;
+  data: Record<string, string>;
+  createdAt: string;
+};
+
+export type FilterListSearchResult = {
+  totalRows: number;
+  filteredRows: number;
+  columns: string[];
+  rows: FilterListRow[];
+};
+
+export type ImportFilterListResult = {
+  sourceFileName: string;
+  totalRows: number;
+  skippedRows: number;
+  importedRows: number;
+  columns: string[];
+  warnings: string[];
+  syncedAggregates: number;
+  insertedFilterComponents: number;
+  skippedNoObjectMatch: number;
+  skippedNoFilterData: number;
+  skippedExistingFilter: number;
+};
