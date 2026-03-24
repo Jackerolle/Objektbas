@@ -1,6 +1,7 @@
 'use client';
 
 import { CameraCapture } from '@/components/CameraCapture';
+import { RoundingPanel } from '@/components/RoundingPanel';
 import {
   addAggregateComponent,
   analyzeComponentImage,
@@ -1244,6 +1245,14 @@ export default function HomePage() {
           >
             Bibliotek
           </button>
+          <button
+            onClick={() => setMode('rondering')}
+            className={`${styles.modeButton} ${
+              mode === 'rondering' ? styles.modeButtonActive : ''
+            }`}
+          >
+            Rondering
+          </button>
         </div>
       </header>
 
@@ -1740,7 +1749,7 @@ export default function HomePage() {
             </section>
           </section>
         )
-      ) : (
+      ) : mode === 'sok' ? (
         <section className={styles.searchCard}>
           <div className={styles.libraryToolbar}>
             <label>
@@ -1853,6 +1862,8 @@ export default function HomePage() {
             </p>
           )}
         </section>
+      ) : (
+        <RoundingPanel />
       )}
     </main>
   );

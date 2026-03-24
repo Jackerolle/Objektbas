@@ -28,7 +28,7 @@ export type ObservationPayload = {
 
 export type SyncState = 'idle' | 'syncing' | 'offline';
 
-export type AppMode = 'lagg-till' | 'sok' | 'importera';
+export type AppMode = 'lagg-till' | 'sok' | 'rondering' | 'importera';
 
 export type ComponentType =
   | 'Motor'
