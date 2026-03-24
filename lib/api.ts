@@ -1,10 +1,14 @@
 ﻿import { mockObjects } from './mockData';
 import {
   AggregateRecord,
+  CreateAggregateEventPayload,
+  AggregateEvent,
   ComponentAnalysis,
   CreateAggregateComponentPayload,
   CreateAggregatePayload,
+  FilterListSearchResult,
   ImportAggregatesResult,
+  ImportFilterListResult,
   ImportPreviewResult,
   ObservationPayload,
   Objekt,
@@ -70,16 +74,34 @@ export async function createObservation(
 export async function analyzeSystemPosition(
   imageDataUrl: string
 ): Promise<SystemPositionAnalysis> {
-  const { analyzeSystemPositionLocally } = await import('./client/freeOcr');
-  return analyzeSystemPositionLocally(imageDataUrl);
+  const response = await fetch(toApiUrl('/api/ai/systemposition'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageDataUrl })
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as SystemPositionAnalysis;
 }
 
 export async function analyzeComponentImage(
   componentType: string,
   imageDataUrl: string
 ): Promise<ComponentAnalysis> {
-  const { analyzeComponentLocally } = await import('./client/freeOcr');
-  return analyzeComponentLocally(componentType, imageDataUrl);
+  const response = await fetch(toApiUrl('/api/ai/component'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ componentType, imageDataUrl })
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as ComponentAnalysis;
 }
 
 export async function createAggregate(
@@ -235,4 +257,109 @@ export async function importAggregatesFile(
   }
 
   return (await response.json()) as ImportAggregatesResult;
+}
+
+export async function getAggregateEvents(
+  aggregateId: string,
+  limit = 100
+): Promise<AggregateEvent[]> {
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+
+  const response = await fetch(
+    toApiUrl(`/api/aggregates/${aggregateId}/events?${params.toString()}`),
+    {
+      cache: 'no-store'
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as AggregateEvent[];
+}
+
+export async function createAggregateEvent(
+  aggregateId: string,
+  payload: CreateAggregateEventPayload
+): Promise<AggregateEvent> {
+  const response = await fetch(toApiUrl(`/api/aggregates/${aggregateId}/events`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as AggregateEvent;
+}
+
+export async function searchFilterList(
+  query: string,
+  limit = 1000
+): Promise<FilterListSearchResult> {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set('query', query.trim());
+  }
+  params.set('limit', String(limit));
+
+  const response = await fetch(toApiUrl(`/api/filterlist?${params.toString()}`), {
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as FilterListSearchResult;
+}
+
+export async function importFilterListFile(
+  file: File
+): Promise<ImportFilterListResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(toApiUrl('/api/filterlist/import'), {
+    method: 'POST',
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as ImportFilterListResult;
+}
+
+export async function repairFilterListAutoRows(): Promise<{
+  scannedRows: number;
+  autoRows: number;
+  mergedIntoExistingRows: number;
+  normalizedRows: number;
+  deletedAutoRows: number;
+  skippedRows: number;
+}> {
+  const response = await fetch(toApiUrl('/api/filterlist'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as {
+    scannedRows: number;
+    autoRows: number;
+    mergedIntoExistingRows: number;
+    normalizedRows: number;
+    deletedAutoRows: number;
+    skippedRows: number;
+  };
 }

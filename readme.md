@@ -75,11 +75,11 @@ Den har appen ska fungera som ett mobilt register over alla objekt och deras utr
    - Tillåt kameran, välj ett objekt och ta en bild.
    - Stäng av nätet för att se offline-kö, slå på igen för automatisk synk.
 
-## Nya funktioner (Lagg till/Sok + Gemini)
+## Nya funktioner (Lagg till/Sok + OpenAI)
 - Startsidan har nu tva lagen: `Lagg till` och `Sok`.
 - `Lagg till`-flode:
   1. Fota systempositionens ID.
-  2. API anropar Gemini for OCR-lik tolkning och foreslar ID.
+  2. API anropar OpenAI for OCR-lik tolkning och foreslar ID.
   3. Anvandaren bekraftar/rattar ID och sparar aggregatet.
   4. Komponenter (Motorbricka, Flakt, Kilrep, Remskivor, Filter) kan laggas till via bild + AI-forslag.
   5. Varje komponent har obligatoriska falt som valideras i API:t innan sparning.
@@ -93,15 +93,15 @@ Den har appen ska fungera som ett mobilt register over alla objekt och deras utr
 - `GET /aggregates/{id}`
 - `POST /aggregates/{id}/components`
 
-### Miljovariabler for Gemini
+### Miljovariabler for OpenAI
 Satt dessa innan du startar API:t:
 
 ```bash
-GEMINI_API_KEY=din-nyckel
-GEMINI_MODEL=gemini-2.0-flash
+OPENAI_API_KEY=din-nyckel
+OPENAI_MODEL=gpt-4o-mini
 ```
 
-Om `GEMINI_API_KEY` saknas anvander API:t fallback-svar sa att flodet fortfarande kan testas manuellt.
+Om `OPENAI_API_KEY` saknas maste avlasning goras manuellt.
 
 ## Deploy pa Vercel med Supabase
 Nya versionen av webbappen kan deployas utan .NET-backend genom Next.js API-routes under `app/api/*`.
@@ -116,8 +116,8 @@ Lagg in foljande variabler i Vercel-projektet:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL` (valfritt, default `gemini-2.0-flash`)
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (valfritt, default `gpt-4o-mini`)
 - `NEXT_PUBLIC_API_BASE_URL` (lamna tom for interna `/api`-routes)
 
 Se ocksa `.env.example`.
@@ -128,7 +128,7 @@ Se ocksa `.env.example`.
 3. Vercel bygger Next.js-appen och exponerar frontend + API-routes tillsammans.
 
 ### 4. Verifiera efter deploy
-- `POST /api/ai/systemposition` fungerar (Gemini/fallback).
+- `POST /api/ai/systemposition` fungerar (OpenAI).
 - `POST /api/aggregates` skapar poster i Supabase.
 - `POST /api/aggregates/{id}/components` validerar obligatoriska falt.
 - Sok i appen visar sparade poster fran Supabase.

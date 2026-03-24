@@ -1,5 +1,5 @@
 ﻿import { NextResponse } from 'next/server';
-import { analyzeSystemPositionWithGemini } from '@/lib/server/gemini';
+import { analyzeSystemPositionWithOpenAi } from '@/lib/server/openai';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Bild saknas.' }, { status: 400 });
     }
 
-    const result = await analyzeSystemPositionWithGemini(body.imageDataUrl);
+    const result = await analyzeSystemPositionWithOpenAi(body.imageDataUrl);
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(

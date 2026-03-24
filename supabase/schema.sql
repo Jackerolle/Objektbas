@@ -119,6 +119,24 @@ for each row execute function public.touch_parent_aggregate_updated_at();
 alter table public.ventilation_aggregates enable row level security;
 alter table public.ventilation_components enable row level security;
 
+-- Event log per aggregate (create/update/component changes/sync actions).
+create table if not exists public.ventilation_aggregate_events (
+  id uuid primary key default gen_random_uuid(),
+  aggregate_id uuid not null references public.ventilation_aggregates(id) on delete cascade,
+  event_type text not null check (length(trim(event_type)) > 0),
+  message text not null check (length(trim(message)) > 0),
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_vent_events_aggregate_created_at
+  on public.ventilation_aggregate_events(aggregate_id, created_at desc);
+
+create index if not exists idx_vent_events_event_type
+  on public.ventilation_aggregate_events(event_type);
+
+alter table public.ventilation_aggregate_events enable row level security;
+
 -- Policies for authenticated users (service role bypasses RLS automatically).
 drop policy if exists "aggregates_select_authenticated" on public.ventilation_aggregates;
 create policy "aggregates_select_authenticated"
@@ -155,6 +173,70 @@ create policy "components_insert_authenticated"
   for insert
   to authenticated
   with check (true);
+
+drop policy if exists "events_select_authenticated" on public.ventilation_aggregate_events;
+create policy "events_select_authenticated"
+  on public.ventilation_aggregate_events
+  for select
+  to authenticated
+  using (true);
+
+drop policy if exists "events_insert_authenticated" on public.ventilation_aggregate_events;
+create policy "events_insert_authenticated"
+  on public.ventilation_aggregate_events
+  for insert
+  to authenticated
+  with check (true);
+
+-- Filter list rows imported from Excel ("Filterlista" tab).
+create table if not exists public.ventilation_filter_list_rows (
+  id uuid primary key default gen_random_uuid(),
+  source_file_name text null,
+  row_number integer not null check (row_number > 0),
+  data jsonb not null default '{}'::jsonb,
+  search_text text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_filter_list_rows_row_number
+  on public.ventilation_filter_list_rows(row_number);
+
+create index if not exists idx_filter_list_rows_created_at
+  on public.ventilation_filter_list_rows(created_at desc);
+
+create index if not exists idx_filter_list_rows_data_gin
+  on public.ventilation_filter_list_rows using gin (data);
+
+alter table public.ventilation_filter_list_rows enable row level security;
+
+drop policy if exists "filter_list_rows_select_authenticated" on public.ventilation_filter_list_rows;
+create policy "filter_list_rows_select_authenticated"
+  on public.ventilation_filter_list_rows
+  for select
+  to authenticated
+  using (true);
+
+drop policy if exists "filter_list_rows_insert_authenticated" on public.ventilation_filter_list_rows;
+create policy "filter_list_rows_insert_authenticated"
+  on public.ventilation_filter_list_rows
+  for insert
+  to authenticated
+  with check (true);
+
+drop policy if exists "filter_list_rows_update_authenticated" on public.ventilation_filter_list_rows;
+create policy "filter_list_rows_update_authenticated"
+  on public.ventilation_filter_list_rows
+  for update
+  to authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "filter_list_rows_delete_authenticated" on public.ventilation_filter_list_rows;
+create policy "filter_list_rows_delete_authenticated"
+  on public.ventilation_filter_list_rows
+  for delete
+  to authenticated
+  using (true);
 
 -- Inventory tables used by /api/objects and /api/observations.
 create table if not exists public.objekt_objects (

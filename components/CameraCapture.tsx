@@ -1,7 +1,7 @@
 'use client';
 
 import type { ChangeEvent } from 'react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 type Props = {
   onCapture: (dataUrl: string) => void | Promise<void>;
@@ -11,6 +11,8 @@ type Props = {
   helperText?: string;
   disabled?: boolean;
   uploadLabel?: string;
+  allowBatchUpload?: boolean;
+  onRegisterCameraTrigger?: ((trigger: (() => void) | null) => void) | undefined;
 };
 
 type FileSource = 'camera' | 'gallery';
@@ -148,7 +150,7 @@ function toUserErrorMessage(error: unknown): string {
     return 'Kunde inte hantera bilden. Prova igen med ett nytt foto.';
   }
 
-  if (/gemini-fel \\(429\\)|resource_exhausted|quota exceeded/i.test(message)) {
+  if (/openai-fel \\(429\\)|resource_exhausted|quota exceeded/i.test(message)) {
     return 'OCR/AI-kvot tillfalligt slut. Vanta en stund eller komplettera manuellt.';
   }
 
@@ -170,7 +172,9 @@ export function CameraCapture({
   captureLabel = 'Ta foto med enhet',
   helperText,
   disabled = false,
-  uploadLabel = 'Ladda upp foto'
+  uploadLabel = 'Ladda upp foto',
+  allowBatchUpload = false,
+  onRegisterCameraTrigger
 }: Props) {
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const deviceCameraInputRef = useRef<HTMLInputElement>(null);
@@ -243,6 +247,26 @@ export function CameraCapture({
     openInputPicker(deviceCameraInputRef.current);
   };
 
+  useEffect(() => {
+    if (!onRegisterCameraTrigger) {
+      return;
+    }
+
+    onRegisterCameraTrigger(() => {
+      if (disabled || isUploading || isSubmitting) {
+        return;
+      }
+
+      setError(null);
+      setLastCaptureInfo('');
+      openInputPicker(deviceCameraInputRef.current);
+    });
+
+    return () => {
+      onRegisterCameraTrigger(null);
+    };
+  }, [disabled, isSubmitting, isUploading, onRegisterCameraTrigger]);
+
   const readFileToDataUrl = async (file: File): Promise<string> => {
     return new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -283,10 +307,10 @@ export function CameraCapture({
     event: ChangeEvent<HTMLInputElement>,
     source: FileSource
   ) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
 
-    if (!file || disabled || isSubmitting) {
+    if (!files.length || disabled || isSubmitting) {
       return;
     }
 
@@ -294,13 +318,21 @@ export function CameraCapture({
     setIsUploading(true);
 
     try {
-      const dataUrl = await processFileToDataUrl(file);
-      await emitCapture(dataUrl);
-      setLastCaptureInfo(
-        source === 'camera'
-          ? 'Foto taget och skickat för avläsning.'
-          : 'Foto uppladdat och skickat för avläsning.'
-      );
+      const selectedFiles =
+        source === 'gallery' && allowBatchUpload ? files : files.slice(0, 1);
+
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const file = selectedFiles[index];
+        const dataUrl = await processFileToDataUrl(file);
+        await emitCapture(dataUrl);
+        const batchText =
+          selectedFiles.length > 1 ? ` (${index + 1}/${selectedFiles.length})` : '';
+        setLastCaptureInfo(
+          source === 'camera'
+            ? `Foto taget och skickat för avläsning${batchText}.`
+            : `Foto uppladdat och skickat för avläsning${batchText}.`
+        );
+      }
     } catch (uploadError) {
       console.error(uploadError);
       setError(toUserErrorMessage(uploadError));
@@ -332,20 +364,25 @@ export function CameraCapture({
           <p style={{ fontSize: '0.8rem', color: '#94a3b8', margin: 0 }}>{subtitle}</p>
           <strong>{title}</strong>
         </div>
+        <button
+          onClick={handlePickGallery}
+          disabled={actionsDisabled}
+          style={{
+            minHeight: '2.15rem',
+            padding: '0.45rem 0.75rem',
+            borderRadius: '999px',
+            border: '1px solid rgba(148,163,184,0.45)',
+            background: 'rgba(15,23,42,0.65)',
+            color: '#e2e8f0',
+            cursor: actionsDisabled ? 'not-allowed' : 'pointer',
+            opacity: actionsDisabled ? 0.55 : 1,
+            fontWeight: 600,
+            fontSize: '0.82rem'
+          }}
+        >
+          {isUploading ? 'Laser fil...' : uploadLabel}
+        </button>
       </header>
-
-      <div
-        style={{
-          borderRadius: '0.75rem',
-          textAlign: 'center',
-          padding: '1rem',
-          color: '#cbd5f5',
-          background: '#020617',
-          border: '1px solid rgba(148, 163, 184, 0.2)'
-        }}
-      >
-        Välj hur du vill lägga till bild för momentet.
-      </div>
 
       {error && (
         <p style={{ margin: '0.75rem 0 0', color: '#fda4af', fontSize: '0.82rem' }}>{error}</p>
@@ -357,21 +394,21 @@ export function CameraCapture({
         </p>
       )}
 
-      {isSubmitting && (
+      {(isSubmitting || isUploading) && (
         <p style={{ margin: '0.45rem 0 0', color: '#67e8f9', fontSize: '0.82rem' }}>
-          Bearbetar bild med lokal OCR...
+          {isUploading ? 'Laser in bild...' : 'Bearbetar bild med OCR/AI...'}
         </p>
       )}
 
-      {!!lastCaptureInfo && !isSubmitting && (
+      {!!lastCaptureInfo && !isSubmitting && !isUploading && (
         <p style={{ margin: '0.45rem 0 0', color: '#86efac', fontSize: '0.82rem' }}>
           {lastCaptureInfo}
         </p>
       )}
 
-      {isMobileDevice && (
+      {isMobileDevice && !error && !isSubmitting && !isUploading && (
         <p style={{ margin: '0.45rem 0 0', color: '#cbd5e1', fontSize: '0.8rem' }}>
-          Tips: Om kameran inte öppnas direkt, använd "Ladda upp foto" och välj "Ta bild".
+          Om kameran inte oppnas direkt, anvand "Ladda upp foto" och valj "Ta bild".
         </p>
       )}
 
@@ -379,6 +416,7 @@ export function CameraCapture({
         ref={galleryInputRef}
         type='file'
         accept={IMAGE_ACCEPT}
+        multiple={allowBatchUpload}
         onChange={(event) => void handleFileChange(event, 'gallery')}
         style={{
           position: 'absolute',
@@ -409,7 +447,7 @@ export function CameraCapture({
           onClick={handlePickDeviceCamera}
           disabled={actionsDisabled}
           style={{
-            flex: isMobileDevice ? '1 1 100%' : 1,
+            flex: 1,
             minHeight: '2.9rem',
             padding: '0.85rem',
             borderRadius: '999px',
@@ -423,24 +461,6 @@ export function CameraCapture({
           }}
         >
           {captureLabel}
-        </button>
-
-        <button
-          onClick={handlePickGallery}
-          disabled={actionsDisabled}
-          style={{
-            flex: isMobileDevice ? '1 1 100%' : undefined,
-            minHeight: '2.9rem',
-            padding: '0.85rem 1rem',
-            borderRadius: '999px',
-            border: '1px solid rgba(148,163,184,0.45)',
-            background: 'rgba(15,23,42,0.65)',
-            color: '#e2e8f0',
-            cursor: actionsDisabled ? 'not-allowed' : 'pointer',
-            opacity: actionsDisabled ? 0.55 : 1
-          }}
-        >
-          {isUploading ? 'Läser fil...' : uploadLabel}
         </button>
       </div>
     </section>
