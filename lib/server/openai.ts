@@ -8,7 +8,7 @@ import {
 import { ComponentAnalysis, SystemPositionAnalysis } from '@/lib/types';
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
-const SYSTEM_ID_PATTERN = /\b\d{3}[A-Z]{2}\d{3,4}\b/g;
+const SYSTEM_ID_PATTERN = /\b(?:\d{3}[A-Z]{2}\d{3,4}|\d{5,10})\b/g;
 
 type OpenAiJson = {
   systemPositionId?: string;
@@ -53,7 +53,7 @@ function sanitizeSystemPositionId(value: string | undefined): string {
 
 function isValidSystemPositionId(value: string): boolean {
   const normalized = sanitizeSystemPositionId(value);
-  return /^\d{3}[A-Z]{2}\d{3,4}$/.test(normalized);
+  return /^\d{3}[A-Z]{2}\d{3,4}$/.test(normalized) || /^\d{5,10}$/.test(normalized);
 }
 
 function parseJsonFromText(raw: string): OpenAiJson {
@@ -126,8 +126,8 @@ function pickBestIdFromText(raw: string): string {
 
 async function callOpenAiForSystemPosition(imageDataUrl: string): Promise<OpenAiJson> {
   const prompt =
-    'Las av system-ID pa skylten. Formatet ar exakt: 3 siffror + 2 bokstaver + 3 eller 4 siffror (ex 408FL205 eller 408FL2057). ' +
-    'Om osaker returnera systemPositionId som MANUELL-KRAVS och skriv osakerhet i notes. Inga andra format ar giltiga.';
+    'Las av system-ID pa skylten. Giltiga format ar antingen 3 siffror + 2 bokstaver + 3 eller 4 siffror (ex 408FL205, 408FL2057) eller aldre numeriskt ID med 5-10 siffror (ex 690772). ' +
+    'Om osaker returnera systemPositionId som MANUELL-KRAVS och skriv osakerhet i notes.';
 
   return callOpenAiJson(prompt, imageDataUrl);
 }

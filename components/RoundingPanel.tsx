@@ -2,6 +2,11 @@
 
 import { CameraCapture } from '@/components/CameraCapture';
 import {
+  analyzeSystemPosition,
+  createAggregate,
+  searchAggregates
+} from '@/lib/api';
+import {
   clearRoundingDraft,
   createEmptyRoundingAggregate,
   createEmptyRoundingDraft,
@@ -13,6 +18,7 @@ import {
   RoundingStatus,
   saveRoundingDraft
 } from '@/lib/roundingStore';
+import { AggregateRecord } from '@/lib/types';
 import { useEffect, useMemo, useState } from 'react';
 
 type PhotoTarget = {
@@ -56,6 +62,65 @@ function normalizeSystemPositionId(value: string): string {
     .replace(/\s+/g, '')
     .replace(/[^A-Z0-9-]/g, '')
     .replace(/^-+|-+$/g, '');
+}
+
+function isUsableSystemPositionId(value: string): boolean {
+  const normalized = normalizeSystemPositionId(value);
+  if (!normalized || normalized.length < 4 || normalized.length > 24) {
+    return false;
+  }
+
+  if (!/[0-9]/.test(normalized)) {
+    return false;
+  }
+
+  if (
+    /^(MANUELL-KRAVS|UNKNOWN|OKAND|N\/A|NA)$/.test(normalized) ||
+    /(OPENAI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|API|GOOGLE|GEMINI)/.test(
+      normalized
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractSystemPositionCandidate(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+
+  const matches = value.match(/[A-Z0-9-]{4,24}/gi) ?? [];
+  for (const match of matches) {
+    const normalized = normalizeSystemPositionId(match);
+    if (isUsableSystemPositionId(normalized)) {
+      return normalized;
+    }
+  }
+
+  return '';
+}
+
+function findAggregateBySystemPosition(
+  candidates: AggregateRecord[],
+  target: string
+): AggregateRecord | null {
+  const normalizedTarget = normalizeSystemPositionId(target);
+
+  for (const aggregate of candidates) {
+    const positions = [
+      aggregate.systemPositionId,
+      aggregate.flSystemPositionId ?? '',
+      aggregate.seSystemPositionId ?? ''
+    ].map((entry) => normalizeSystemPositionId(entry));
+
+    if (positions.includes(normalizedTarget)) {
+      return aggregate;
+    }
+  }
+
+  return null;
 }
 
 function escapeHtml(value: string): string {
@@ -158,6 +223,8 @@ export function RoundingPanel() {
   const [isLoading, setIsLoading] = useState(true);
   const [systemPositionInput, setSystemPositionInput] = useState('');
   const [feedback, setFeedback] = useState<string>('');
+  const [isCapturingSystemPosition, setIsCapturingSystemPosition] = useState(true);
+  const [isResolvingSystemPosition, setIsResolvingSystemPosition] = useState(false);
   const [photoTarget, setPhotoTarget] = useState<PhotoTarget | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
 
@@ -211,31 +278,108 @@ export function RoundingPanel() {
     }));
   };
 
-  const handleStartAggregate = () => {
-    const normalized = normalizeSystemPositionId(systemPositionInput);
-    if (!normalized) {
-      setFeedback('Ange systemposition innan du startar rondering på aggregatet.');
+  const activateDraftAggregate = (systemPositionId: string) => {
+    const normalized = normalizeSystemPositionId(systemPositionId);
+    setDraft((current) => {
+      const existing = current.aggregates.find(
+        (aggregate) => normalizeSystemPositionId(aggregate.systemPositionId) === normalized
+      );
+
+      if (existing) {
+        return { ...current, activeAggregateId: existing.id };
+      }
+
+      const created = createEmptyRoundingAggregate(normalized);
+      return {
+        ...current,
+        aggregates: [...current.aggregates, created],
+        activeAggregateId: created.id
+      };
+    });
+  };
+
+  const registerSystemPosition = async (
+    rawSystemPosition: string,
+    source: 'foto' | 'manuell'
+  ) => {
+    const normalized = normalizeSystemPositionId(rawSystemPosition);
+    if (!isUsableSystemPositionId(normalized)) {
+      setFeedback(
+        'Systempositionen är ogiltig. Ange ett ID med siffror (ex: 459AG222 eller 690772).'
+      );
       return;
     }
 
     setFeedback('');
+    setIsResolvingSystemPosition(true);
 
-    const existing = draft.aggregates.find(
-      (aggregate) => aggregate.systemPositionId === normalized
-    );
+    try {
+      const searchResult = await searchAggregates(normalized);
+      const matched = findAggregateBySystemPosition(searchResult, normalized);
 
-    if (existing) {
-      setDraft((current) => ({ ...current, activeAggregateId: existing.id }));
-      return;
+      if (matched) {
+        const canonical = normalizeSystemPositionId(matched.systemPositionId) || normalized;
+        activateDraftAggregate(canonical);
+        setSystemPositionInput(canonical);
+        setFeedback(
+          `Systemposition ${normalized} hittades i biblioteket och kopplades till aggregat ${canonical}.`
+        );
+        return;
+      }
+
+      const created = await createAggregate({ systemPositionId: normalized });
+      const canonical = normalizeSystemPositionId(created.systemPositionId) || normalized;
+      activateDraftAggregate(canonical);
+      setSystemPositionInput(canonical);
+      setFeedback(
+        `Nytt aggregat ${canonical} skapades i biblioteket via ${source === 'foto' ? 'fotot' : 'manuell registrering'}.`
+      );
+    } catch (error) {
+      activateDraftAggregate(normalized);
+      setSystemPositionInput(normalized);
+      setFeedback(
+        `Kunde inte verifiera biblioteket just nu (${String(error)}). ${normalized} lades till lokalt i ronderingen.`
+      );
+    } finally {
+      setIsResolvingSystemPosition(false);
+      setIsCapturingSystemPosition(false);
     }
+  };
 
-    const created = createEmptyRoundingAggregate(normalized);
-    setDraft((current) => ({
-      ...current,
-      aggregates: [...current.aggregates, created],
-      activeAggregateId: created.id
-    }));
-    setSystemPositionInput('');
+  const handleStartAggregate = () => {
+    void registerSystemPosition(systemPositionInput, 'manuell');
+  };
+
+  const handleCaptureSystemPosition = async (imageDataUrl: string) => {
+    setFeedback('Läser systemposition från foto...');
+    setIsResolvingSystemPosition(true);
+
+    try {
+      const analysis = await analyzeSystemPosition(imageDataUrl);
+      const direct = normalizeSystemPositionId(analysis.systemPositionId);
+      const fromNotes = extractSystemPositionCandidate(analysis.notes);
+      const candidate = isUsableSystemPositionId(direct)
+        ? direct
+        : isUsableSystemPositionId(fromNotes)
+          ? fromNotes
+          : '';
+
+      if (!candidate) {
+        setFeedback(
+          'Kunde inte läsa systemposition från foto. Ange systemposition manuellt och fortsätt.'
+        );
+        return;
+      }
+
+      setSystemPositionInput(candidate);
+      await registerSystemPosition(candidate, 'foto');
+    } catch (error) {
+      setFeedback(
+        `Kunde inte analysera systempositionsfoto: ${String(error)}. Ange systemposition manuellt.`
+      );
+    } finally {
+      setIsResolvingSystemPosition(false);
+    }
   };
 
   const removeAggregate = (aggregateId: string) => {
@@ -421,6 +565,34 @@ export function RoundingPanel() {
         <p style={{ margin: '0.75rem 0 0', color: '#bae6fd' }}>{feedback}</p>
       )}
 
+      {isCapturingSystemPosition && !photoTarget && (
+        <div style={{ marginTop: '0.9rem' }}>
+          <CameraCapture
+            onCapture={handleCaptureSystemPosition}
+            title='Steg 1: Fotografera systemposition'
+            subtitle='Systemposition måste läsas in innan rondering fortsätter.'
+            helperText='Efter fotot kontrolleras om positionen redan finns i biblioteket eller om nytt aggregat ska skapas.'
+          />
+          <div style={{ marginTop: '0.55rem' }}>
+            <button
+              onClick={() => setIsCapturingSystemPosition(false)}
+              disabled={isResolvingSystemPosition}
+              style={{
+                borderRadius: '0.65rem',
+                border: '1px solid rgba(148, 163, 184, 0.38)',
+                background: 'rgba(15, 23, 42, 0.7)',
+                color: '#e2e8f0',
+                padding: '0.55rem 0.8rem',
+                cursor: isResolvingSystemPosition ? 'not-allowed' : 'pointer',
+                opacity: isResolvingSystemPosition ? 0.6 : 1
+              }}
+            >
+              Avbryt foto
+            </button>
+          </div>
+        </div>
+      )}
+
       <div
         style={{
           marginTop: '0.9rem',
@@ -433,7 +605,7 @@ export function RoundingPanel() {
         <input
           value={systemPositionInput}
           onChange={(event) => setSystemPositionInput(event.target.value)}
-          placeholder='Ange systemposition (ex: 459AG222)'
+          placeholder='Ange systemposition (ex: 459AG222 eller 690772)'
           style={{
             borderRadius: '0.7rem',
             border: '1px solid rgba(148, 163, 184, 0.36)',
@@ -445,8 +617,8 @@ export function RoundingPanel() {
           }}
         />
         <button
-          onClick={handleStartAggregate}
-          disabled={isLoading}
+          onClick={() => setIsCapturingSystemPosition(true)}
+          disabled={isLoading || isResolvingSystemPosition}
           style={{
             borderRadius: '0.7rem',
             border: '1px solid rgba(34, 211, 238, 0.5)',
@@ -454,10 +626,29 @@ export function RoundingPanel() {
             color: '#e2e8f0',
             padding: '0.7rem 0.95rem',
             fontWeight: 700,
-            cursor: isLoading ? 'not-allowed' : 'pointer'
+            cursor:
+              isLoading || isResolvingSystemPosition ? 'not-allowed' : 'pointer',
+            opacity: isLoading || isResolvingSystemPosition ? 0.65 : 1
           }}
         >
-          Starta aggregat
+          Ta bild systemposition
+        </button>
+        <button
+          onClick={handleStartAggregate}
+          disabled={isLoading || isResolvingSystemPosition}
+          style={{
+            borderRadius: '0.7rem',
+            border: '1px solid rgba(34, 211, 238, 0.5)',
+            background: 'rgba(15, 23, 42, 0.75)',
+            color: '#e2e8f0',
+            padding: '0.7rem 0.95rem',
+            fontWeight: 700,
+            cursor:
+              isLoading || isResolvingSystemPosition ? 'not-allowed' : 'pointer',
+            opacity: isLoading || isResolvingSystemPosition ? 0.65 : 1
+          }}
+        >
+          Registrera systemposition
         </button>
       </div>
 

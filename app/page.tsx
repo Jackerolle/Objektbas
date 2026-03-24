@@ -169,7 +169,7 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
     return false;
   }
 
-  if (normalized.length < 4) {
+  if (normalized.length < 4 || normalized.length > 24) {
     return false;
   }
 
@@ -185,7 +185,7 @@ function isUsableDetectedSystemPositionId(value: string): boolean {
     return false;
   }
 
-  return /[A-Z]/.test(normalized) && /[0-9]/.test(normalized);
+  return /[0-9]/.test(normalized);
 }
 
 function extractSystemPositionCandidateFromNotes(value: string | undefined): string {
@@ -591,7 +591,7 @@ export default function HomePage() {
     setStatus(
       method === 'foto'
         ? 'Startläge: fota objektskylt.'
-        : 'Startläge: lägg in manuellt (fyll i AG-systemposition och skapa aggregat).'
+        : 'Startläge: lägg in manuellt (fyll i systemposition och skapa aggregat).'
     );
   };
 
@@ -621,7 +621,7 @@ export default function HomePage() {
 
     const candidateId = normalizeSystemPositionId(forcedSystemPositionId || systemPositionId);
     if (!candidateId) {
-      throw new Error('AG-systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
+      throw new Error('Systemposition saknas. Ange ID manuellt och fotografera objektskylt igen.');
     }
 
     const created = await createAggregate(buildAggregatePayload(candidateId));
@@ -824,7 +824,7 @@ export default function HomePage() {
     }
 
     if (!systemPositionId.trim()) {
-      setError('AG-systemposition krävs.');
+      setError('Systemposition krävs.');
       return;
     }
 
@@ -859,7 +859,7 @@ export default function HomePage() {
 
     const candidateId = normalizeSystemPositionId(systemPositionId);
     if (!candidateId) {
-      setError('Ange AG-systemposition för att skapa aggregat manuellt.');
+      setError('Ange systemposition för att skapa aggregat manuellt.');
       return;
     }
 

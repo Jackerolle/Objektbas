@@ -17,18 +17,17 @@ function normalizeSystemPositionId(value: string): string {
 }
 
 function isValidSystemPositionId(value: string): boolean {
-  if (!value || value.length < 8 || value.length > 9) {
+  if (!value || value.length < 4 || value.length > 24) {
     return false;
   }
 
-  if (!/^\d{3}[A-Z]{2}\d{3,4}$/.test(value)) {
+  if (!/[0-9]/.test(value)) {
     return false;
   }
 
   if (
-    /(MANUELL-KRAVS|UNKNOWN|OKAND|OPENAI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|API)/.test(
-      value
-    )
+    /^(MANUELL-KRAVS|UNKNOWN|OKAND|NA)$/.test(value) ||
+    /(OPENAI|QUOTA|RESOURCE|EXHAUSTED|ERROR|HTTP|RATE|API|GOOGLE|GEMINI)/.test(value)
   ) {
     return false;
   }
@@ -57,7 +56,7 @@ export async function POST(request: Request) {
 
     if (!payload.systemPositionId?.trim()) {
       return NextResponse.json(
-        { error: 'AG-systempositionens ID krävs.' },
+        { error: 'Systempositionens ID krävs.' },
         { status: 400 }
       );
     }
