@@ -44,6 +44,22 @@ const KLASS_KEY_ALIASES = ['filterklass', 'klass'];
 const ANTAL_KEY_ALIASES = ['antal', 'qty', 'quantity', 'st'];
 const PLACERING_KEY_ALIASES = ['placering', 'position', 'lokation', 'plats'];
 const INTERVALL_KEY_ALIASES = ['intervall', 'bytesintervall', 'serviceintervall'];
+const SYSTEMPOSITION_KEY_ALIASES = ['systemposition', 'systempositionid', 'systemid'];
+const NOTES_KEY_ALIASES = ['notering', 'kommentar', 'anmärkning', 'anmarkning'];
+const SOURCE_KEY_ALIASES = ['skapadvia', 'källa', 'kalla', 'source'];
+const CATEGORY_KEY_ALIASES = ['huvudkategori', 'kategori'];
+const SUBCATEGORY_KEY_ALIASES = ['underkategori', 'delkategori'];
+const COMPONENTTYPE_KEY_ALIASES = ['komponenttyp', 'typ'];
+const MATERIALBETECKNING_KEY_ALIASES = [
+  'materialbeteckning',
+  'korrektbenamning',
+  'korrektbenämning',
+  'benamning',
+  'benämning'
+];
+const DINAIR_ARTIKEL_KEY_ALIASES = ['dinairartikel', 'dinairartikelnr', 'artikelnummer'];
+const TAGG_KEY_ALIASES = ['tagg'];
+const STATUS_KEY_ALIASES = ['status'];
 
 function assertNoError(error: { message: string } | null) {
   if (error) {
@@ -83,6 +99,67 @@ function findValueByAliases(
   }
 
   return '';
+}
+
+function findKeyByAliases(
+  data: Record<string, string>,
+  aliases: string[]
+): string | undefined {
+  const entries = Object.keys(data).map((key) => ({
+    key,
+    token: normalizeToken(key)
+  }));
+
+  for (const alias of aliases) {
+    const aliasToken = normalizeToken(alias);
+    if (!aliasToken) {
+      continue;
+    }
+
+    const exact = entries.find((entry) => entry.token === aliasToken);
+    if (exact) {
+      return exact.key;
+    }
+  }
+
+  for (const alias of aliases) {
+    const aliasToken = normalizeToken(alias);
+    if (!aliasToken) {
+      continue;
+    }
+
+    const partial = entries.find(
+      (entry) => entry.token.includes(aliasToken) || aliasToken.includes(entry.token)
+    );
+    if (partial) {
+      return partial.key;
+    }
+  }
+
+  return undefined;
+}
+
+function setValueByAliases(
+  data: Record<string, string>,
+  aliases: string[],
+  fallbackKey: string,
+  value: string
+) {
+  const key = findKeyByAliases(data, aliases) ?? fallbackKey;
+  data[key] = value.trim();
+}
+
+function setValueIfPresent(
+  data: Record<string, string>,
+  aliases: string[],
+  fallbackKey: string,
+  value: string
+) {
+  if (!value.trim()) {
+    return;
+  }
+
+  setValueByAliases(data, aliases, fallbackKey, value);
 }
 
 function toStringRecord(value: Record<string, unknown> | null): Record<string, string> {
@@ -280,13 +357,29 @@ export async function ensureFilterComponentInFilterList(
   const lookupNeedle = normalizeToken(obNumber || aggregate.systemPositionId);
   const { data: candidates, error: lookupError } = await supabase
     .from('ventilation_filter_list_rows')
-    .select('id, data')
+    .select('id, source_file_name, row_number, data')
     .ilike('search_text', `%${lookupNeedle}%`)
-    .limit(250);
+    .order('row_number', { ascending: true })
+    .limit(400);
 
   assertNoError(lookupError);
 
-  for (const row of (candidates ?? []) as Array<{ id: string; data: Record<string, unknown> | null }>) {
+  const objectMatchedRows: Array<{
+    id: string;
+    sourceFileName: string | null;
+    rowNumber: number;
+    data: Record<string, string>;
+    existingFilter: string;
+    existingDimension: string;
+    existingClass: string;
+  }> = [];
+
+  for (const row of (candidates ?? []) as Array<{
+    id: string;
+    source_file_name: string | null;
+    row_number: number;
+    data: Record<string, unknown> | null;
+  }>) {
     const data = toStringRecord(row.data);
     const existingOb = findValueByAliases(data, OB_KEY_ALIASES);
     const existingFilter = findValueByAliases(data, FILTER_KEY_ALIASES);
@@ -305,6 +398,74 @@ export async function ensureFilterComponentInFilterList(
     if (obMatch && filterMatch && dimensionMatch && classMatch) {
       return false;
     }
+
+    if (obMatch) {
+      objectMatchedRows.push({
+        id: row.id,
+        sourceFileName: row.source_file_name,
+        rowNumber: row.row_number,
+        data,
+        existingFilter,
+        existingDimension,
+        existingClass
+      });
+    }
+  }
+
+  const updateTarget =
+    objectMatchedRows.find((row) => !row.existingFilter.trim()) ??
+    objectMatchedRows.find((row) => !row.existingDimension.trim() && !row.existingClass.trim()) ??
+    null;
+
+  if (updateTarget) {
+    const merged = { ...updateTarget.data };
+    setValueByAliases(merged, OB_KEY_ALIASES, 'OB-nummer', obNumber);
+    setValueByAliases(
+      merged,
+      SYSTEMPOSITION_KEY_ALIASES,
+      'Systemposition',
+      aggregate.systemPositionId
+    );
+    setValueByAliases(merged, FILTER_KEY_ALIASES, 'Filter', filterName);
+    setValueIfPresent(merged, DIMENSION_KEY_ALIASES, 'Dimension', dimension);
+    setValueIfPresent(merged, KLASS_KEY_ALIASES, 'Filterklass', filterClass);
+    setValueIfPresent(merged, ANTAL_KEY_ALIASES, 'Antal', antal);
+    setValueIfPresent(
+      merged,
+      MATERIALBETECKNING_KEY_ALIASES,
+      'Materialbeteckning',
+      filterName
+    );
+    setValueIfPresent(merged, TAGG_KEY_ALIASES, 'Tagg', obNumber);
+    setValueIfPresent(merged, PLACERING_KEY_ALIASES, 'Placering', aggregate.position ?? '');
+    setValueIfPresent(merged, INTERVALL_KEY_ALIASES, 'Bytesintervall', attributes.bytesintervall ?? '');
+    setValueIfPresent(merged, NOTES_KEY_ALIASES, 'Notering', payload.notes?.trim() ?? '');
+    setValueIfPresent(
+      merged,
+      CATEGORY_KEY_ALIASES,
+      'Huvudkategori',
+      payload.assembly?.trim() || payload.componentType
+    );
+    setValueIfPresent(
+      merged,
+      SUBCATEGORY_KEY_ALIASES,
+      'Underkategori',
+      payload.subComponent?.trim() || payload.componentType
+    );
+    setValueIfPresent(merged, COMPONENTTYPE_KEY_ALIASES, 'Komponenttyp', payload.componentType);
+    setValueIfPresent(merged, SOURCE_KEY_ALIASES, 'Skapad via', 'App auto');
+    setValueIfPresent(merged, STATUS_KEY_ALIASES, 'status', 'systemövervakat');
+
+    const { error: updateError } = await supabase
+      .from('ventilation_filter_list_rows')
+      .update({
+        data: merged,
+        search_text: buildSearchText(merged)
+      })
+      .eq('id', updateTarget.id);
+
+    assertNoError(updateError);
+    return true;
   }
 
   const { data: latestRow, error: latestError } = await supabase
@@ -318,24 +479,47 @@ export async function ensureFilterComponentInFilterList(
 
   const nextRowNumber = ((latestRow as { row_number?: number } | null)?.row_number ?? 0) + 1;
 
-  const data: Record<string, string> = {
-    'OB-nummer': obNumber,
-    Systemposition: aggregate.systemPositionId,
-    Filter: filterName,
-    Filterklass: filterClass,
-    Dimension: dimension,
-    Antal: antal,
-    Avdelning: aggregate.department ?? '',
-    Position: aggregate.position ?? '',
-    Huvudkategori: payload.assembly?.trim() || payload.componentType,
-    Underkategori: payload.subComponent?.trim() || payload.componentType,
-    Komponenttyp: payload.componentType,
-    Notering: payload.notes?.trim() || '',
-    'Skapad via': 'App auto'
-  };
+  const templateData = objectMatchedRows[0]?.data ?? {};
+  const data: Record<string, string> = Object.fromEntries(
+    Object.keys(templateData).map((key) => [key, ''])
+  );
+
+  setValueByAliases(data, OB_KEY_ALIASES, 'OB-nummer', obNumber);
+  setValueByAliases(data, SYSTEMPOSITION_KEY_ALIASES, 'Systemposition', aggregate.systemPositionId);
+  setValueByAliases(data, FILTER_KEY_ALIASES, 'Filter', filterName);
+  setValueIfPresent(data, DIMENSION_KEY_ALIASES, 'Dimension', dimension);
+  setValueIfPresent(data, KLASS_KEY_ALIASES, 'Filterklass', filterClass);
+  setValueIfPresent(data, ANTAL_KEY_ALIASES, 'Antal', antal);
+  setValueIfPresent(data, PLACERING_KEY_ALIASES, 'Placering', aggregate.position ?? '');
+  setValueIfPresent(data, MATERIALBETECKNING_KEY_ALIASES, 'Materialbeteckning', filterName);
+  setValueIfPresent(
+    data,
+    DINAIR_ARTIKEL_KEY_ALIASES,
+    'DINAIR artikel',
+    attributes.dinairArtikel ?? attributes.artikelnummer ?? ''
+  );
+  setValueIfPresent(data, TAGG_KEY_ALIASES, 'Tagg', obNumber);
+  setValueIfPresent(data, INTERVALL_KEY_ALIASES, 'Bytesintervall', attributes.bytesintervall ?? '');
+  setValueIfPresent(data, NOTES_KEY_ALIASES, 'Notering', payload.notes?.trim() || '');
+  setValueIfPresent(
+    data,
+    CATEGORY_KEY_ALIASES,
+    'Huvudkategori',
+    payload.assembly?.trim() || payload.componentType
+  );
+  setValueIfPresent(
+    data,
+    SUBCATEGORY_KEY_ALIASES,
+    'Underkategori',
+    payload.subComponent?.trim() || payload.componentType
+  );
+  setValueIfPresent(data, COMPONENTTYPE_KEY_ALIASES, 'Komponenttyp', payload.componentType);
+  setValueIfPresent(data, SOURCE_KEY_ALIASES, 'Skapad via', 'App auto');
+  setValueIfPresent(data, STATUS_KEY_ALIASES, 'status', 'systemövervakat');
+  setValueIfPresent(data, ['avdelning', 'department'], 'Avdelning', aggregate.department ?? '');
 
   const { error: insertError } = await supabase.from('ventilation_filter_list_rows').insert({
-    source_file_name: 'Auto (fran app)',
+    source_file_name: objectMatchedRows[0]?.sourceFileName ?? 'Auto (fran app)',
     row_number: nextRowNumber,
     data,
     search_text: buildSearchText(data)
