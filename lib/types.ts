@@ -28,7 +28,7 @@ export type ObservationPayload = {
 
 export type SyncState = 'idle' | 'syncing' | 'offline';
 
-export type AppMode = 'lagg-till' | 'sok' | 'rondering' | 'importera';
+export type AppMode = 'lagg-till' | 'sok' | 'rondering' | 'filterlista';
 
 export type ComponentType =
   | 'Motor'
@@ -187,4 +187,76 @@ export type ImportFilterListResult = {
   skippedNoObjectMatch: number;
   skippedNoFilterData: number;
   skippedExistingFilter: number;
+};
+
+export type RoundStatus = 'ongoing' | 'completed';
+
+export type RoundSeverity = 'info' | 'atgard' | 'akut';
+
+export type RoundItemRecord = {
+  id: string;
+  roundId: string;
+  aggregateId?: string;
+  systemPositionId: string;
+  componentArea?: string;
+  title: string;
+  observation: string;
+  recommendedAction: string;
+  severity: RoundSeverity;
+  photos: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RoundRecord = {
+  id: string;
+  title: string;
+  department?: string;
+  customerName?: string;
+  performedBy?: string;
+  status: RoundStatus;
+  summaryText: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  items: RoundItemRecord[];
+};
+
+export type CreateRoundPayload = {
+  title?: string;
+  department?: string;
+  customerName?: string;
+  performedBy?: string;
+  status?: RoundStatus;
+};
+
+export type UpdateRoundPayload = {
+  title?: string;
+  department?: string;
+  customerName?: string;
+  performedBy?: string;
+  status?: RoundStatus;
+  summaryText?: string;
+};
+
+export type CreateRoundItemPayload = {
+  aggregateId?: string;
+  systemPositionId: string;
+  componentArea?: string;
+  title: string;
+  observation: string;
+  recommendedAction: string;
+  severity: RoundSeverity;
+  photos?: string[];
+};
+
+export type UpdateRoundItemPayload = {
+  aggregateId?: string;
+  systemPositionId?: string;
+  componentArea?: string;
+  title?: string;
+  observation?: string;
+  recommendedAction?: string;
+  severity?: RoundSeverity;
+  photos?: string[];
 };

@@ -6,13 +6,19 @@ import {
   ComponentAnalysis,
   CreateAggregateComponentPayload,
   CreateAggregatePayload,
+  CreateRoundItemPayload,
+  CreateRoundPayload,
   FilterListSearchResult,
   ImportAggregatesResult,
   ImportFilterListResult,
   ImportPreviewResult,
   ObservationPayload,
   Objekt,
-  SystemPositionAnalysis
+  RoundRecord,
+  RoundStatus,
+  SystemPositionAnalysis,
+  UpdateRoundItemPayload,
+  UpdateRoundPayload
 } from './types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.trim() ?? '';
@@ -295,6 +301,136 @@ export async function createAggregateEvent(
   }
 
   return (await response.json()) as AggregateEvent;
+}
+
+export async function listRounds(filters?: {
+  query?: string;
+  department?: string;
+  status?: RoundStatus | '';
+}): Promise<RoundRecord[]> {
+  const params = new URLSearchParams();
+  if (filters?.query?.trim()) {
+    params.set('query', filters.query.trim());
+  }
+  if (filters?.department?.trim()) {
+    params.set('department', filters.department.trim());
+  }
+  if (filters?.status?.trim()) {
+    params.set('status', filters.status.trim());
+  }
+
+  const response = await fetch(toApiUrl(`/api/rounds?${params.toString()}`), {
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord[];
+}
+
+export async function getRoundById(roundId: string): Promise<RoundRecord> {
+  const response = await fetch(toApiUrl(`/api/rounds/${roundId}`), {
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord;
+}
+
+export async function createRound(payload: CreateRoundPayload): Promise<RoundRecord> {
+  const response = await fetch(toApiUrl('/api/rounds'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord;
+}
+
+export async function updateRound(
+  roundId: string,
+  payload: UpdateRoundPayload
+): Promise<RoundRecord> {
+  const response = await fetch(toApiUrl(`/api/rounds/${roundId}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord;
+}
+
+export async function deleteRound(roundId: string): Promise<void> {
+  const response = await fetch(toApiUrl(`/api/rounds/${roundId}`), {
+    method: 'DELETE'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+}
+
+export async function createRoundItem(
+  roundId: string,
+  payload: CreateRoundItemPayload
+): Promise<RoundRecord> {
+  const response = await fetch(toApiUrl(`/api/rounds/${roundId}/items`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord;
+}
+
+export async function updateRoundItem(
+  roundId: string,
+  itemId: string,
+  payload: UpdateRoundItemPayload
+): Promise<RoundRecord> {
+  const response = await fetch(toApiUrl(`/api/rounds/${roundId}/items/${itemId}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord;
+}
+
+export async function deleteRoundItem(
+  roundId: string,
+  itemId: string
+): Promise<RoundRecord> {
+  const response = await fetch(toApiUrl(`/api/rounds/${roundId}/items/${itemId}`), {
+    method: 'DELETE'
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+
+  return (await response.json()) as RoundRecord;
 }
 
 export async function searchFilterList(

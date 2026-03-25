@@ -9,7 +9,10 @@ import {
   createAggregate,
   deleteAggregate,
   deleteAggregateComponent,
+  importFilterListFile,
+  repairFilterListAutoRows,
   searchAggregates,
+  searchFilterList,
   updateAggregateComponent,
   updateAggregate
 } from '@/lib/api';
@@ -28,6 +31,7 @@ import {
   AggregateRecord,
   AppMode,
   ComponentType,
+  FilterListRow,
   SystemPositionAnalysis
 } from '@/lib/types';
 import { useEffect, useMemo, useState } from 'react';
@@ -118,6 +122,20 @@ const REQUIRED_TASK_IDS = CAPTURE_TASKS.filter((task) => task.required).map(
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
+
+function formatAttributeLabel(key: string): string {
+  if (!key) {
+    return '';
+  }
+
+  const withSpaces = key
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .trim();
+
+  return withSpaces.charAt(0).toUpperCase() + withSpaces.slice(1);
+}
+
 function findTask(taskId: string): CaptureTask {
   return CAPTURE_TASKS.find((task) => task.id === taskId) ?? CAPTURE_TASKS[0];
 }
@@ -456,9 +474,15 @@ export default function HomePage() {
 
   const [searchResults, setSearchResults] = useState<AggregateRecord[]>([]);
   const [departmentFilter, setDepartmentFilter] = useState('');
-  const [expandedLibraryAggregateId, setExpandedLibraryAggregateId] = useState<string | null>(
-    null
-  );
+  const [filterRows, setFilterRows] = useState<FilterListRow[]>([]);
+  const [filterColumns, setFilterColumns] = useState<string[]>([]);
+  const [filterQuery, setFilterQuery] = useState('');
+  const [filterFile, setFilterFile] = useState<File | null>(null);
+  const [totalFilterRows, setTotalFilterRows] = useState(0);
+  const [filteredFilterRows, setFilteredFilterRows] = useState(0);
+  const [isLoadingFilterList, setIsLoadingFilterList] = useState(false);
+  const [isImportingFilterList, setIsImportingFilterList] = useState(false);
+  const [isRepairingFilterList, setIsRepairingFilterList] = useState(false);
 
   const [isProcessingCapture, setIsProcessingCapture] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -684,6 +708,83 @@ export default function HomePage() {
       setIsSearching(false);
     }
   };
+
+  const handleLoadFilterList = async (queryOverride?: string) => {
+    clearFeedback();
+    setIsLoadingFilterList(true);
+
+    try {
+      const query = queryOverride ?? filterQuery;
+      const result = await searchFilterList(query, 2000);
+      setFilterRows(result.rows);
+      setFilterColumns(result.columns);
+      setTotalFilterRows(result.totalRows);
+      setFilteredFilterRows(result.filteredRows);
+      setStatus(
+        query.trim()
+          ? `${result.filteredRows} filterrader matchar "${query.trim()}".`
+          : `${result.totalRows} filterrader laddade.`
+      );
+    } catch (filterError) {
+      setError(`Kunde inte hamta filterlista: ${String(filterError)}`);
+    } finally {
+      setIsLoadingFilterList(false);
+    }
+  };
+
+  const handleImportFilterList = async () => {
+    clearFeedback();
+
+    if (!filterFile) {
+      setError('Valj en Excel-fil for filterlistan.');
+      return;
+    }
+
+    setIsImportingFilterList(true);
+
+    try {
+      const result = await importFilterListFile(filterFile);
+      setFilterFile(null);
+      setFilterQuery('');
+      setStatus(
+        `Filterlista importerad (${result.importedRows}/${result.totalRows} rader).`
+      );
+      await handleLoadFilterList('');
+    } catch (importError) {
+      setError(`Kunde inte importera filterlista: ${String(importError)}`);
+    } finally {
+      setIsImportingFilterList(false);
+    }
+  };
+
+  const handleRepairFilterList = async () => {
+    clearFeedback();
+    setIsRepairingFilterList(true);
+
+    try {
+      const result = await repairFilterListAutoRows();
+      setStatus(
+        `Filterlista stadad. Auto-rader: ${result.autoRows}, merge: ${result.mergedIntoExistingRows}, normaliserade: ${result.normalizedRows}, borttagna dubletter: ${result.deletedAutoRows}, hoppade over: ${result.skippedRows}.`
+      );
+      await handleLoadFilterList(filterQuery);
+    } catch (repairError) {
+      setError(`Kunde inte stada auto-rader i filterlista: ${String(repairError)}`);
+    } finally {
+      setIsRepairingFilterList(false);
+    }
+  };
+
+  useEffect(() => {
+    if (mode !== 'filterlista') {
+      return;
+    }
+
+    if (filterRows.length || isLoadingFilterList) {
+      return;
+    }
+
+    void handleLoadFilterList(filterQuery);
+  }, [filterQuery, filterRows.length, isLoadingFilterList, mode]);
 
   const handleCapture = async (imageDataUrl: string) => {
     clearFeedback();
@@ -1195,7 +1296,6 @@ export default function HomePage() {
         setStartMethod(null);
         setMode('sok');
         setDepartmentFilter('');
-        setExpandedLibraryAggregateId(null);
         void handleSearch('');
       }
 
@@ -1236,7 +1336,6 @@ export default function HomePage() {
             onClick={() => {
               setMode('sok');
               setDepartmentFilter('');
-              setExpandedLibraryAggregateId(null);
               void handleSearch('');
             }}
             className={`${styles.modeButton} ${
@@ -1244,6 +1343,17 @@ export default function HomePage() {
             }`}
           >
             Bibliotek
+          </button>
+          <button
+            onClick={() => {
+              setMode('filterlista');
+              void handleLoadFilterList(filterQuery);
+            }}
+            className={`${styles.modeButton} ${
+              mode === 'filterlista' ? styles.modeButtonActive : ''
+            }`}
+          >
+            Filterlista
           </button>
           <button
             onClick={() => setMode('rondering')}
@@ -1758,7 +1868,6 @@ export default function HomePage() {
                 value={departmentFilter}
                 onChange={(event) => {
                   setDepartmentFilter(event.target.value);
-                  setExpandedLibraryAggregateId(null);
                 }}
               >
                 <option value=''>Välj avdelning</option>
@@ -1775,14 +1884,7 @@ export default function HomePage() {
             <ul className={styles.searchResultList}>
               {filteredSearchResults.map((aggregate) => (
                 <li key={aggregate.id}>
-                  <button
-                    className={styles.libraryAggregateRow}
-                    onClick={() =>
-                      setExpandedLibraryAggregateId((current) =>
-                        current === aggregate.id ? null : aggregate.id
-                      )
-                    }
-                  >
+                  <div className={styles.libraryAggregateRow}>
                     <span>
                       <strong>AG:</strong> {aggregate.systemPositionId || 'Ej satt'}
                     </span>
@@ -1795,14 +1897,34 @@ export default function HomePage() {
                     <span>
                       <strong>Position:</strong> {aggregate.position || 'Ej satt'}
                     </span>
-                  </button>
+                  </div>
 
-                  {expandedLibraryAggregateId === aggregate.id && (
-                    <div className={styles.libraryAggregateDetails}>
-                      <p>
-                        Senast uppdaterad:{' '}
+                  <div className={styles.libraryAggregateDetails}>
+                    <div className={styles.aggregateMetaGrid}>
+                      <p className={styles.aggregateMetaItem}>
+                        <strong>Avdelning:</strong> {aggregate.department || 'Ej satt'}
+                      </p>
+                      <p className={styles.aggregateMetaItem}>
+                        <strong>Position:</strong> {aggregate.position || 'Ej satt'}
+                      </p>
+                      <p className={styles.aggregateMetaItem}>
+                        <strong>FL:</strong> {aggregate.flSystemPositionId || 'Ej satt'}
+                      </p>
+                      <p className={styles.aggregateMetaItem}>
+                        <strong>SE:</strong> {aggregate.seSystemPositionId || 'Ej satt'}
+                      </p>
+                      <p className={styles.aggregateMetaItem}>
+                        <strong>Skapad:</strong>{' '}
+                        {new Date(aggregate.createdAt).toLocaleString('sv-SE')}
+                      </p>
+                      <p className={styles.aggregateMetaItem}>
+                        <strong>Senast uppdaterad:</strong>{' '}
                         {new Date(aggregate.updatedAt).toLocaleString('sv-SE')}
                       </p>
+                      <p className={`${styles.aggregateMetaItem} ${styles.aggregateMetaNotes}`}>
+                        <strong>Notering:</strong> {aggregate.notes || 'Ingen notering'}
+                      </p>
+                    </div>
 
                       {!!aggregate.components.length && (
                         <div className={styles.componentOverview}>
@@ -1810,16 +1932,41 @@ export default function HomePage() {
                             Komponentöversikt ({aggregate.components.length})
                           </p>
                           <ul className={styles.componentOverviewList}>
-                            {aggregate.components.map((component) => (
-                              <li key={component.id}>
-                                <strong>{component.componentType}</strong>
-                                <span>
-                                  {component.assembly ? `${component.assembly}` : 'Ingen huvudkategori'}
-                                  {component.subComponent ? ` / ${component.subComponent}` : ''}
-                                </span>
-                                <span>{component.identifiedValue}</span>
-                              </li>
-                            ))}
+                            {aggregate.components.map((component) => {
+                              const attributes = Object.entries(component.attributes).filter(
+                                ([, value]) => value?.trim()
+                              );
+
+                              return (
+                                <li key={component.id}>
+                                  <strong>{component.componentType}</strong>
+                                  <span>
+                                    {component.assembly
+                                      ? `${component.assembly}`
+                                      : 'Ingen huvudkategori'}
+                                    {component.subComponent ? ` / ${component.subComponent}` : ''}
+                                  </span>
+                                  <span>
+                                    <strong>Värde:</strong>{' '}
+                                    {component.identifiedValue || 'Ej satt'}
+                                  </span>
+                                  {!!attributes.length && (
+                                    <div className={styles.componentAttributeList}>
+                                      {attributes.map(([key, value]) => (
+                                        <span key={`${component.id}-${key}`}>
+                                          <strong>{formatAttributeLabel(key)}:</strong> {value}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {!attributes.length && <span>Inga attribut sparade.</span>}
+                                  <span className={styles.componentNote}>
+                                    <strong>Notering:</strong>{' '}
+                                    {component.notes?.trim() || 'Ingen notering'}
+                                  </span>
+                                </li>
+                              );
+                            })}
                           </ul>
                         </div>
                       )}
@@ -1844,7 +1991,6 @@ export default function HomePage() {
                         </button>
                       </div>
                     </div>
-                  )}
                 </li>
               ))}
             </ul>
@@ -1862,8 +2008,105 @@ export default function HomePage() {
             </p>
           )}
         </section>
-      ) : (
+      ) : mode === 'rondering' ? (
         <RoundingPanel />
+      ) : (
+        <section className={styles.searchCard}>
+          <div className={styles.filterUploadCard}>
+            <div className={styles.cardHeader}>
+              <h2>Filterlista</h2>
+              <span className={styles.badge}>
+                {filteredFilterRows}/{totalFilterRows} rader
+              </span>
+            </div>
+
+            <p className={styles.heroText}>
+              Ladda upp Excel-fil med filterlistan. Ny import ersatter tidigare lista och blir
+              direkt sokbar.
+            </p>
+
+            <div className={styles.filterUploadRow}>
+              <input
+                type='file'
+                accept='.xlsx,.xls,.csv'
+                onChange={(event) => setFilterFile(event.target.files?.[0] ?? null)}
+              />
+              <button
+                className={styles.manualSaveButton}
+                onClick={() => void handleImportFilterList()}
+                disabled={!filterFile || isImportingFilterList}
+              >
+                {isImportingFilterList ? 'Importerar...' : 'Importera filterlista'}
+              </button>
+              <button
+                className={styles.inlineButton}
+                onClick={() => void handleRepairFilterList()}
+                disabled={isRepairingFilterList || isImportingFilterList || isLoadingFilterList}
+              >
+                {isRepairingFilterList ? 'Stadar...' : 'Stada auto-rader'}
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.searchControls}>
+            <input
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+              placeholder='Sok pa filtertyp, artikel, position, aggregat, notering...'
+            />
+            <button
+              onClick={() => void handleLoadFilterList(filterQuery)}
+              disabled={isLoadingFilterList}
+            >
+              {isLoadingFilterList ? 'Soker...' : 'Sok'}
+            </button>
+            <button
+              className={styles.inlineButton}
+              onClick={() => {
+                setFilterQuery('');
+                void handleLoadFilterList('');
+              }}
+              disabled={isLoadingFilterList}
+            >
+              Rensa
+            </button>
+          </div>
+
+          {!!filterRows.length && !!filterColumns.length && (
+            <div className={styles.filterTableWrap}>
+              <table className={styles.filterTable}>
+                <thead>
+                  <tr>
+                    <th>Rad</th>
+                    <th>Kalla</th>
+                    <th>Skapad</th>
+                    {filterColumns.map((column) => (
+                      <th key={`filter-col-${column}`}>{column}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filterRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.rowNumber}</td>
+                      <td>{row.sourceFileName || '-'}</td>
+                      <td>{new Date(row.createdAt).toLocaleString('sv-SE')}</td>
+                      {filterColumns.map((column) => (
+                        <td key={`${row.id}-${column}`}>{row.data[column] || '-'}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {!isLoadingFilterList && !filterRows.length && (
+            <p className={styles.emptyState}>
+              Ingen filterdata visad an. Importera en fil eller prova ett annat sokord.
+            </p>
+          )}
+        </section>
       )}
     </main>
   );

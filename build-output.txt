@@ -1,0 +1,15 @@
+
+> objektbas-web@0.1.0 prebuild
+> npm run check:page-ui
+
+
+> objektbas-web@0.1.0 check:page-ui
+> node scripts/verify-page-ui.js
+
+UI-check OK: app/page.tsx innehaller forvantad version.
+
+> objektbas-web@0.1.0 build
+> next build
+
+  ▲ Next.js 14.2.3
+
