@@ -3,7 +3,11 @@
 import { CameraCapture } from '@/components/CameraCapture';
 import {
   analyzeSystemPosition,
+  createRound,
+  createRoundItem,
+  deleteRound,
   createAggregate,
+  listRounds,
   searchAggregates
 } from '@/lib/api';
 import {
@@ -18,7 +22,7 @@ import {
   RoundingStatus,
   saveRoundingDraft
 } from '@/lib/roundingStore';
-import { AggregateRecord } from '@/lib/types';
+import { AggregateRecord, CreateRoundItemPayload, RoundRecord } from '@/lib/types';
 import { useEffect, useMemo, useState } from 'react';
 
 type PhotoTarget = {
@@ -153,6 +157,20 @@ function hasActionableContent(entry: RoundingCategoryEntry): boolean {
 
 function buildSummaryDocumentHtml(draft: RoundingDraft): string {
   const generatedAt = new Date().toLocaleString('sv-SE');
+  const metaLines = [
+    draft.title.trim() ? `<p style="margin:0 0 6px;"><strong>Rubrik:</strong> ${escapeHtml(draft.title.trim())}</p>` : '',
+    draft.department.trim()
+      ? `<p style="margin:0 0 6px;"><strong>Avdelning:</strong> ${escapeHtml(draft.department.trim())}</p>`
+      : '',
+    draft.customerName.trim()
+      ? `<p style="margin:0 0 6px;"><strong>Beställare:</strong> ${escapeHtml(draft.customerName.trim())}</p>`
+      : '',
+    draft.performedBy.trim()
+      ? `<p style="margin:0 0 6px;"><strong>Utförd av:</strong> ${escapeHtml(draft.performedBy.trim())}</p>`
+      : ''
+  ]
+    .filter(Boolean)
+    .join('');
   const body = draft.aggregates
     .map((aggregate) => {
       const actionableCategories = ROUNDING_CATEGORIES.filter((category) =>
@@ -212,21 +230,90 @@ function buildSummaryDocumentHtml(draft: RoundingDraft): string {
       <body style="font-family:Calibri, Arial, sans-serif;color:#0f172a;line-height:1.4;">
         <h1 style="margin:0 0 8px;">Ronderingssammanställning</h1>
         <p style="margin:0 0 14px;">Genererad: ${escapeHtml(generatedAt)}</p>
+        ${metaLines}
         ${body || '<p>Inga aggregat i ronderingen.</p>'}
       </body>
     </html>
   `;
 }
 
+function buildRoundItemPayloads(draft: RoundingDraft): CreateRoundItemPayload[] {
+  return draft.aggregates.flatMap((aggregate) =>
+    ROUNDING_CATEGORIES.flatMap((category) => {
+      const entry = aggregate.categories[category.key];
+      if (!hasActionableContent(entry)) {
+        return [];
+      }
+
+      const note = entry.note.trim();
+      const observation = note || `Status: ${statusLabel(entry.status)}.`;
+      const recommendedAction =
+        entry.status === 'atgard'
+          ? `Följ upp ${category.label.toLowerCase()} och planera åtgärd.`
+          : 'Ingen omedelbar åtgärd registrerad.';
+
+      return [
+        {
+          systemPositionId: aggregate.systemPositionId,
+          componentArea: category.label,
+          title: category.label,
+          observation,
+          recommendedAction,
+          severity: entry.status === 'atgard' ? 'atgard' : 'info',
+          photos: entry.photos
+        }
+      ];
+    })
+  );
+}
+
+function downloadSummaryDocument(html: string): void {
+  const filenameDate = new Date().toISOString().slice(0, 10);
+  const blob = new Blob([`\ufeff${html}`], {
+    type: 'application/msword'
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `Rondering_${filenameDate}.doc`;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function formatRoundStatus(status: RoundRecord['status']): string {
+  return status === 'completed' ? 'Avslutad' : 'Pågående';
+}
+
 export function RoundingPanel() {
   const [draft, setDraft] = useState<RoundingDraft>(createEmptyRoundingDraft);
   const [isLoading, setIsLoading] = useState(true);
+  const [savedRounds, setSavedRounds] = useState<RoundRecord[]>([]);
+  const [isLoadingRounds, setIsLoadingRounds] = useState(true);
+  const [deletingRoundId, setDeletingRoundId] = useState<string | null>(null);
   const [systemPositionInput, setSystemPositionInput] = useState('');
   const [feedback, setFeedback] = useState<string>('');
   const [isCapturingSystemPosition, setIsCapturingSystemPosition] = useState(true);
   const [isResolvingSystemPosition, setIsResolvingSystemPosition] = useState(false);
   const [photoTarget, setPhotoTarget] = useState<PhotoTarget | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
+
+  const loadRoundHistory = async (options?: { silent?: boolean }) => {
+    setIsLoadingRounds(true);
+
+    try {
+      const rounds = await listRounds();
+      setSavedRounds(rounds);
+    } catch (error) {
+      if (!options?.silent) {
+        setFeedback(`Kunde inte hämta ronderingshistorik: ${String(error)}`);
+      }
+    } finally {
+      setIsLoadingRounds(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -250,6 +337,10 @@ export function RoundingPanel() {
   }, []);
 
   useEffect(() => {
+    void loadRoundHistory({ silent: true });
+  }, []);
+
+  useEffect(() => {
     if (isLoading) {
       return;
     }
@@ -269,7 +360,23 @@ export function RoundingPanel() {
     );
   }, [draft.activeAggregateId, draft.aggregates]);
 
-  const updateAggregate = (aggregateId: string, updater: (current: RoundingAggregate) => RoundingAggregate) => {
+  const roundItemPayloads = useMemo(() => buildRoundItemPayloads(draft), [draft]);
+
+  const updateDraftMetadata = (
+    patch: Partial<
+      Pick<RoundingDraft, 'title' | 'department' | 'customerName' | 'performedBy'>
+    >
+  ) => {
+    setDraft((current) => ({
+      ...current,
+      ...patch
+    }));
+  };
+
+  const updateAggregate = (
+    aggregateId: string,
+    updater: (current: RoundingAggregate) => RoundingAggregate
+  ) => {
     setDraft((current) => ({
       ...current,
       aggregates: current.aggregates.map((aggregate) =>
@@ -464,28 +571,49 @@ export function RoundingPanel() {
     setIsCompiling(true);
     setFeedback('');
 
+    let createdRoundId = '';
+
     try {
       const html = buildSummaryDocumentHtml(draft);
-      const filenameDate = new Date().toISOString().slice(0, 10);
-      const blob = new Blob([`\ufeff${html}`], {
-        type: 'application/msword'
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `Rondering_${filenameDate}.doc`;
-      anchor.style.display = 'none';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadSummaryDocument(html);
+
+      let savedRound: RoundRecord;
+      try {
+        savedRound = await createRound({
+          title: draft.title.trim() || undefined,
+          department: draft.department.trim() || undefined,
+          customerName: draft.customerName.trim() || undefined,
+          performedBy: draft.performedBy.trim() || undefined,
+          status: 'completed'
+        });
+        createdRoundId = savedRound.id;
+
+        for (const payload of roundItemPayloads) {
+          savedRound = await createRoundItem(savedRound.id, payload);
+        }
+      } catch (saveError) {
+        if (createdRoundId) {
+          try {
+            await deleteRound(createdRoundId);
+          } catch {
+            // Ignore cleanup errors and report the original failure instead.
+          }
+        }
+
+        throw saveError;
+      }
 
       await clearRoundingDraft();
       setDraft(createEmptyRoundingDraft());
       setPhotoTarget(null);
-      setFeedback('Sammanställning skapad. Ronderingsbilder och åtgärder har rensats.');
+      await loadRoundHistory({ silent: true });
+      setFeedback(
+        `Rondering sparad i historiken (${savedRound.items.length} punkt${savedRound.items.length === 1 ? '' : 'er'}) och Word-underlag nedladdat.`
+      );
     } catch (error) {
-      setFeedback(`Kunde inte skapa sammanställning: ${String(error)}`);
+      setFeedback(
+        `Word-underlag laddades ned, men ronderingen kunde inte sparas i historiken: ${String(error)}`
+      );
     } finally {
       setIsCompiling(false);
     }
@@ -496,6 +624,20 @@ export function RoundingPanel() {
     setDraft(createEmptyRoundingDraft());
     setPhotoTarget(null);
     setFeedback('Ronderingsutkast rensat.');
+  };
+
+  const handleDeleteSavedRound = async (roundId: string) => {
+    setDeletingRoundId(roundId);
+
+    try {
+      await deleteRound(roundId);
+      await loadRoundHistory({ silent: true });
+      setFeedback('Rondering borttagen från historiken.');
+    } catch (error) {
+      setFeedback(`Kunde inte ta bort rondering: ${String(error)}`);
+    } finally {
+      setDeletingRoundId(null);
+    }
   };
 
   return (
@@ -520,7 +662,8 @@ export function RoundingPanel() {
         <div>
           <h2 style={{ margin: 0 }}>Rondering</h2>
           <p style={{ margin: '0.25rem 0 0', color: '#9fb0bf' }}>
-            Systemposition krävs först. Foto är valfritt per kontrollpunkt.
+            Systemposition krävs först. Vid sammanställning sparas ronderingen i historik och
+            Word-underlag laddas ned.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -540,7 +683,7 @@ export function RoundingPanel() {
               opacity: isCompiling || draft.aggregates.length === 0 ? 0.6 : 1
             }}
           >
-            {isCompiling ? 'Sammanställer...' : 'Sammanställ'}
+            {isCompiling ? 'Sparar...' : 'Spara och sammanställ'}
           </button>
           <button
             onClick={() => void handleClearDraft()}
@@ -564,6 +707,100 @@ export function RoundingPanel() {
       {!!feedback && (
         <p style={{ margin: '0.75rem 0 0', color: '#bae6fd' }}>{feedback}</p>
       )}
+
+      <div
+        style={{
+          marginTop: '0.9rem',
+          display: 'grid',
+          gap: '0.6rem',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))'
+        }}
+      >
+        <label
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.25rem'
+          }}
+        >
+          Rubrik
+          <input
+            value={draft.title}
+            onChange={(event) => updateDraftMetadata({ title: event.target.value })}
+            placeholder='Valfri rubrik för ronderingen'
+            style={{
+              borderRadius: '0.7rem',
+              border: '1px solid rgba(148, 163, 184, 0.36)',
+              background: 'rgba(2, 6, 23, 0.85)',
+              color: '#f8fafc',
+              padding: '0.7rem'
+            }}
+          />
+        </label>
+        <label
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.25rem'
+          }}
+        >
+          Avdelning
+          <input
+            value={draft.department}
+            onChange={(event) => updateDraftMetadata({ department: event.target.value })}
+            placeholder='Valfri avdelning'
+            style={{
+              borderRadius: '0.7rem',
+              border: '1px solid rgba(148, 163, 184, 0.36)',
+              background: 'rgba(2, 6, 23, 0.85)',
+              color: '#f8fafc',
+              padding: '0.7rem'
+            }}
+          />
+        </label>
+        <label
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.25rem'
+          }}
+        >
+          Beställare
+          <input
+            value={draft.customerName}
+            onChange={(event) => updateDraftMetadata({ customerName: event.target.value })}
+            placeholder='Valfri beställare'
+            style={{
+              borderRadius: '0.7rem',
+              border: '1px solid rgba(148, 163, 184, 0.36)',
+              background: 'rgba(2, 6, 23, 0.85)',
+              color: '#f8fafc',
+              padding: '0.7rem'
+            }}
+          />
+        </label>
+        <label
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.25rem'
+          }}
+        >
+          Utförd av
+          <input
+            value={draft.performedBy}
+            onChange={(event) => updateDraftMetadata({ performedBy: event.target.value })}
+            placeholder='Valfri tekniker'
+            style={{
+              borderRadius: '0.7rem',
+              border: '1px solid rgba(148, 163, 184, 0.36)',
+              background: 'rgba(2, 6, 23, 0.85)',
+              color: '#f8fafc',
+              padding: '0.7rem'
+            }}
+          />
+        </label>
+      </div>
 
       {isCapturingSystemPosition && !photoTarget && (
         <div style={{ marginTop: '0.9rem' }}>
@@ -653,7 +890,9 @@ export function RoundingPanel() {
       </div>
 
       <p style={{ margin: '0.5rem 0 0', color: '#cbd5e1', fontSize: '0.86rem' }}>
-        Bilder sparas lokalt tills du klickar på <strong>Sammanställ</strong>.
+        {draft.aggregates.length} aggregat i utkastet, {roundItemPayloads.length} punkt
+        {roundItemPayloads.length === 1 ? '' : 'er'} redo att sparas. Bilder sparas lokalt tills
+        du klickar på <strong>Spara och sammanställ</strong>.
       </p>
 
       {!!draft.aggregates.length && (
@@ -896,6 +1135,132 @@ export function RoundingPanel() {
           </div>
         </div>
       )}
+
+      <section
+        style={{
+          marginTop: '1.2rem',
+          borderTop: '1px solid rgba(148, 163, 184, 0.2)',
+          paddingTop: '1rem'
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '0.75rem',
+            flexWrap: 'wrap'
+          }}
+        >
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1rem' }}>Ronderingshistorik</h3>
+            <p style={{ margin: '0.25rem 0 0', color: '#9fb0bf', fontSize: '0.86rem' }}>
+              Senast sparade ronderingar från databasen.
+            </p>
+          </div>
+          <button
+            onClick={() => void loadRoundHistory()}
+            disabled={isLoadingRounds}
+            style={{
+              borderRadius: '0.65rem',
+              border: '1px solid rgba(148, 163, 184, 0.38)',
+              background: 'rgba(15, 23, 42, 0.7)',
+              color: '#e2e8f0',
+              padding: '0.55rem 0.8rem',
+              cursor: isLoadingRounds ? 'not-allowed' : 'pointer',
+              opacity: isLoadingRounds ? 0.6 : 1
+            }}
+          >
+            {isLoadingRounds ? 'Laddar...' : 'Ladda om historik'}
+          </button>
+        </div>
+
+        {!isLoadingRounds && savedRounds.length === 0 && (
+          <p style={{ margin: '0.8rem 0 0', color: '#cbd5e1' }}>
+            Ingen sparad rondering hittades ännu.
+          </p>
+        )}
+
+        <div style={{ marginTop: '0.8rem', display: 'grid', gap: '0.75rem' }}>
+          {savedRounds.map((round) => (
+            <article
+              key={round.id}
+              style={{
+                border: '1px solid rgba(148, 163, 184, 0.26)',
+                borderRadius: '0.85rem',
+                padding: '0.85rem',
+                background: 'rgba(2, 6, 23, 0.52)'
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'start',
+                  gap: '0.75rem',
+                  flexWrap: 'wrap'
+                }}
+              >
+                <div>
+                  <strong>{round.title}</strong>
+                  <div style={{ marginTop: '0.25rem', color: '#9fb0bf', fontSize: '0.84rem' }}>
+                    {formatRoundStatus(round.status)} • {round.items.length} punkt
+                    {round.items.length === 1 ? '' : 'er'} • Uppdaterad{' '}
+                    {new Date(round.updatedAt).toLocaleString('sv-SE')}
+                  </div>
+                  {(round.department || round.performedBy || round.customerName) && (
+                    <div
+                      style={{
+                        marginTop: '0.35rem',
+                        color: '#cbd5e1',
+                        fontSize: '0.84rem'
+                      }}
+                    >
+                      {[
+                        round.department ? `Avdelning: ${round.department}` : '',
+                        round.customerName ? `Beställare: ${round.customerName}` : '',
+                        round.performedBy ? `Utförd av: ${round.performedBy}` : ''
+                      ]
+                        .filter(Boolean)
+                        .join(' • ')}
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => void handleDeleteSavedRound(round.id)}
+                  disabled={deletingRoundId === round.id}
+                  style={{
+                    borderRadius: '0.65rem',
+                    border: '1px solid rgba(248, 113, 113, 0.6)',
+                    background: 'rgba(127, 29, 29, 0.35)',
+                    color: '#fee2e2',
+                    padding: '0.5rem 0.7rem',
+                    cursor: deletingRoundId === round.id ? 'not-allowed' : 'pointer',
+                    opacity: deletingRoundId === round.id ? 0.6 : 1
+                  }}
+                >
+                  {deletingRoundId === round.id ? 'Tar bort...' : 'Ta bort'}
+                </button>
+              </div>
+
+              <pre
+                style={{
+                  margin: '0.8rem 0 0',
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'inherit',
+                  color: '#e2e8f0',
+                  background: 'rgba(15, 23, 42, 0.45)',
+                  borderRadius: '0.75rem',
+                  padding: '0.75rem'
+                }}
+              >
+                {round.summaryText || 'Ingen sammanfattning sparad.'}
+              </pre>
+            </article>
+          ))}
+        </div>
+      </section>
     </section>
   );
 }

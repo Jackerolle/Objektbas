@@ -24,6 +24,10 @@ export type RoundingAggregate = {
 };
 
 export type RoundingDraft = {
+  title: string;
+  department: string;
+  customerName: string;
+  performedBy: string;
   aggregates: RoundingAggregate[];
   activeAggregateId?: string;
   updatedAt: string;
@@ -59,6 +63,10 @@ export function createEmptyRoundingAggregate(systemPositionId: string): Rounding
 
 export function createEmptyRoundingDraft(): RoundingDraft {
   return {
+    title: '',
+    department: '',
+    customerName: '',
+    performedBy: '',
     aggregates: [],
     updatedAt: new Date().toISOString()
   };
