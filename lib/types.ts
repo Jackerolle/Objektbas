@@ -55,6 +55,9 @@ export type ComponentAnalysis = {
   componentType: string;
   identifiedValue: string;
   confidence: number;
+  identifiedValueConfidence?: number;
+  attributeConfidence?: Record<string, number>;
+  ocrText?: string;
   notes: string;
   provider: string;
   requiresManualConfirmation: boolean;
@@ -77,6 +80,7 @@ export type CreateAggregateComponentPayload = {
   notes?: string;
   assembly?: string;
   subComponent?: string;
+  visitId?: string;
   imageDataUrl?: string;
   attributes?: Record<string, string>;
 };
