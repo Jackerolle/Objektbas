@@ -63,7 +63,8 @@ const DEPARTMENT_PRESETS = [
   'PM 2',
   'Renseri',
   'RF 3',
-  'Silstation/Degern\u00e4s'
+  'Silstation/Degern\u00e4s',
+  '\u00d6vrigt'
 ];
 
 const CAPTURE_TASKS: CaptureTask[] = [
@@ -492,9 +493,25 @@ export default function HomePage() {
       return [];
     }
 
-    const scoped = searchResults.filter(
-      (item) => (item.department ?? '').trim().toLowerCase() === departmentToken
+    const presetTokens = new Set(
+      DEPARTMENT_PRESETS.map((preset) => preset.trim().toLowerCase()).filter(
+        (token) => token !== '\u00f6vrigt'
+      )
     );
+
+    const scoped = searchResults.filter((item) => {
+      const itemDepartmentToken = (item.department ?? '').trim().toLowerCase();
+
+      if (departmentToken === '\u00f6vrigt') {
+        return (
+          !itemDepartmentToken ||
+          itemDepartmentToken === '\u00f6vrigt' ||
+          !presetTokens.has(itemDepartmentToken)
+        );
+      }
+
+      return itemDepartmentToken === departmentToken;
+    });
 
     return scoped.sort((a, b) => {
       const aTime = new Date(a.updatedAt).getTime();
